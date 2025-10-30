@@ -21,6 +21,31 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy import integrate
 from scipy.special import ellipk
+from numba import njit,prange
+import matplotlib as mpl
+from matplotlib.patches import CirclePolygon
+from matplotlib.collections import PatchCollection
+
+# Make LaTeX-style plots
+plt.rc('text', usetex=True)
+plt.rc('font', family='serif')
+plt.rcParams.update({'font.size': 10})
+
+@njit(parallel=True,nopython=True)
+def compute_holm_radius(Xc, Yc, Ac):
+    numerator = 0
+    denominator = 0
+    for i in prange(Xc.shape[0]):
+        for j in prange(Xc.shape[1]):
+            denominator += Ac[i,j]
+            for k in prange(Xc.shape[0]):
+                for l in prange(Xc.shape[1]):
+                    if not (i == k and j == l):
+                        dist = np.sqrt((Xc[i,j] - Xc[k,l])**2 + (Yc[i,j] - Yc[k,l])**2)
+                        numerator += Ac[i,j]*Ac[k,l] / dist
+
+    alpha_inv = numerator / (denominator**2 * np.pi)
+    return 1/alpha_inv/2.
 
 def indenter_shape(r, type, params):
     """
@@ -140,7 +165,7 @@ def plot_current_state(r, p, z, w, title="Current state"):
     Visualization function to monitor convergence progress
     Shows pressure distribution, displacement, and displacement change
     """
-    fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+    fig, ax = plt.subplots(1, 3, figsize=(5.1, 1.6))
     fig.suptitle(title)
 
     # Pressure distribution
@@ -191,9 +216,9 @@ Estar = E / (2*(1 - nu**2))  # Reduced elastic modulus (assume same material)
 
 # Surface roughness parameters
 sigma = 1e-6              # RMS surface roughness (m)
-eta = 4e3 * 1e6           # Asperity density (1/m²)
+eta = 30e3 * 1e6           # Asperity density (1/m²)
 # eta = 2 * 1e6             # Asperity density (1/m²)
-beta = 1e-5               # Asperity tip radius of curvature (m)
+beta = 1e-4               # Asperity tip radius of curvature (m)
 mu = (4.0/3.0) * eta * Estar * np.sqrt(beta)  # Contact stiffness parameter
 chi = np.pi * eta * beta # Asperity area parameter
 
@@ -216,7 +241,7 @@ elif ind_type == 'flat':
 elif ind_type == 'cone':
     integration_limit = 0.1 * Radius
 pstar = Estar * np.sqrt(sigma / Radius)  # Characteristic pressure scale
-Np = 50                 # Number of radial grid points
+Np = 30                 # Number of radial grid points
 
 # Convergence parameters
 kappa = 0.2               # Under-relaxation factor for stability
@@ -352,7 +377,7 @@ elif ind_type == 'flat':
 area_fraction = chi * F1(h, sigma)
 
 # Plot pressure comparison with area fraction
-fig, ax1 = plt.subplots(figsize=(10, 6))
+fig, ax1 = plt.subplots(figsize=(5.1, 3.))
 
 # Plot pressure on primary y-axis
 ax1.plot(ref_r/Radius, ref_pressure/pstar, "r--", linewidth=2, label="Hertzian pressure")
@@ -401,48 +426,60 @@ else:
 
 # Show contact area
 dx = np.sqrt(1/eta)
-x_coarse = np.arange(-3*a_computed, 3*a_computed+dx, dx)
-y_coarse = np.arange(-3*a_computed, 3*a_computed+dx, dx)
+extent = 2.
+x_coarse = np.arange(-extent*a_computed, extent*a_computed+dx, dx)
+y_coarse = np.arange(-extent*a_computed, extent*a_computed+dx, dx)
 Xc, Yc = np.meshgrid(x_coarse, y_coarse, indexing='ij')
+Ac = np.zeros_like(Xc)
 Rc = np.sqrt(Xc**2 + Yc**2)
 number_of_asperities = eta * dx**2
 print(f"Number of asperities per coarse cell: {number_of_asperities:.2f}")
 fig,ax = plt.subplots(figsize=(6, 6))
+plt.xlabel("Normalized X coordinate, $x/a$")
+plt.ylabel("Normalized Y coordinate, $y/a$")
+first_contact = True  # Flag to add label only once
+patches = []
 for i in range(Xc.shape[0]):
     for j in range(Xc.shape[1]):
         polar_r = np.sqrt(Xc[i,j]**2 + Yc[i,j]**2)
-        # Compute average area_fraction between r-dx/2 and r+dx/2
-        r_min = max(polar_r - dx/2, 0)
-        r_max = polar_r + dx/2
-        idx_min = np.searchsorted(r, r_min)
-        idx_max = np.searchsorted(r, r_max)
-        if idx_max > idx_min:
-            mean_area_fraction = np.mean(area_fraction[idx_min:idx_max])
-        else:
-            mean_area_fraction = 0
-        contact_area = mean_area_fraction * dx**2
-
-        plt.Circle((Xc[i,j], Yc[i,j]), np.sqrt(contact_area/np.pi), color='grey', fill=False, alpha=0.3)
-plt.scatter(Xc, Yc, s=1, color='grey', alpha=0.3, label='Asperities')
-# Add circle of radius a_computed in the center
-circle = plt.Circle((0, 0), a_computed, color='k', fill=False, linestyle='--', label='Hertzian contact radius, $a$')
-circle2 = plt.Circle((0, 0), 2*a_computed, color='k', fill=False, linestyle='--', label='Doubled radius, $2a$')
-ax.add_artist(circle)
-ax.add_artist(circle2)
+        # Exact computation of area fraction at polar_r
+        area_frac = np.interp(polar_r, r, area_fraction, left=0.0, right=0.0)
+        # Total contact area in the cell (dx x dx) containing number_of_asperities asperities
+        contact_area_total = area_frac * dx**2
+        Ac[i,j] = contact_area_total
+        # Average contact area per asperity in this cell
+        contact_area_per_asperity = contact_area_total / number_of_asperities if number_of_asperities > 0 else 0
+        
+        # Only plot circles if there's contact
+        if contact_area_per_asperity > 0:
+            label = 'Asperity contact' if first_contact else ''
+            R = np.sqrt(contact_area_per_asperity / np.pi) / a_computed
+            # Circle with high vertex resolution (stays circular even when tiny)
+            patches.append(CirclePolygon((Xc[i, j]/a_computed, Yc[i, j]/a_computed),
+                                         radius=R, resolution=128, fc='grey', ec='none'))
+            # circle = plt.Circle((Xc[i,j]/a_computed, Yc[i,j]/a_computed), np.sqrt(contact_area_per_asperity/np.pi)/a_computed, 
+            #                   color='grey', fill=True, alpha=1., label=label)
+            # ax.add_artist(circle)
+            first_contact = False
 
 # Compute Holm's radius
-denominator = 0
-for i in range(Xc.shape[0]):
-    for j in range(Xc.shape[1]):
-        for k in range(Xc.shape[0]):
-            for l in range(Xc.shape[1]):
-                if not (i == k and j == l):
-                    dist = np.sqrt((Xc[i,j] - Xc[k,l])**2 + (Yc[i,j] - Yc[k,l])**2)
-                    denominator += 1/dist
-alpha = 16 * eta * 36*a_computed**2 / (3*np.pi) / denominator
-circle3 = plt.Circle((0, 0), alpha, color='red', fill=False, linestyle='--', label="Holm's radius")
-print("Holm's radius:", alpha, "m, a_computed:", a_computed, "m, ratio:", alpha/a_computed )
-ax.add_artist(circle3)
+print("Computing Holm's radius...")
+holm_radius = compute_holm_radius(Xc, Yc, Ac)
+
+# draw all circles efficiently at once
+pc = PatchCollection(patches, match_original=True)
+ax.add_collection(pc)
+
+# invisible scatter to keep legend handle spacing if you need it
+plt.scatter([], [], s=30, color='grey', label='Asperity contact')
+
+# reference circles
+ax.add_artist(plt.Circle((0, 0), 1.0, color='k', fill=False, linestyle='--',
+                         label='Hertzian contact radius, $a$', zorder=3))
+
+ax.add_artist(plt.Circle((0, 0), holm_radius/a_computed, color='red', fill=False,
+                         linestyle='--', label="Holm's radius", zorder=3))
+
 plt.legend()
 plt.show()
 fig.savefig(f"Contact_area_ind_type_{ind_type}_approach_{d/sigma:.2f}.pdf")
