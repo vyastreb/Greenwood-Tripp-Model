@@ -15,14 +15,14 @@ header-includes:
 
 ## Model description
 
-To make a truly predictive model linking contact area and force in contact of rough spheres, Greenwood and Tripp constructed a model taking into account averaged deformations induced by the contact pressure due to asperity contact [1]. This model, initially constructed for spherical contact, could be extended to arbitrary contact shape (its implementation for the axisymmetric contact is provided in \href{https://github.com/vyastreb/Greenwood-Tripp-Model}{github.com/vyastreb/Greenwood-Tripp-Model}
+To make a truly predictive model linking contact area and force in contact of rough spheres, Greenwood and Tripp constructed a model taking into account averaged deformations induced by the contact pressure due to asperity contact [1]. This model, initially constructed for spherical contact, could be extended to arbitrary contact shape (its implementation for the axisymmetric contact is provided in \href{https://github.com/vyastreb/Greenwood-Tripp-Model}{github.com/vyastreb/Greenwood-Tripp-Model}).
 
 The main feature of the model is that it solves the problem in an iterative way by computing pressures from the separation field using multi-asperity model, then it computes induced displacements using integral convolution, recomputing separations and so on before the convergence. The pressure $p^i(x,y)$ induced by asperity contact based on a statistical multi-asperity model for the separation $z^i_0(x,y)$ between two surfaces is given by the following equation
 \begin{equation}
  p^i(x,y) = \tfrac{4}{3} \eta E^* r^{1/2}  \int\limits_{z^i_0(x,y)}^\infty (z-z^i_0(x,y))^{3/2}P(z) \,dz,
  \label{eq:gt1}
 \end{equation}
-where $\eta$ is the asperity density (\SI{}{m^{-2}}), $r$ (\SI{}{m}) their average geometrically mean curvature radius and $P(z)$ (\SI{}{m^{-1}}) is the probability density of asperity hights.
+where $\eta$ is the asperity density (\SI{}{m^{-2}}), $r$ (\SI{}{m}) their average geometrically mean curvature radius and $P(z)$ (\SI{}{m^{-1}}) is the probability density of asperity heights.
 This average pressure is used to induce macroscopic deformation following Boussinesq approach, the total induced displacement (summing both sides) is given by
 \begin{equation}
 u^i(x,y) = \frac{1}{\pi E^*}\;\text{p.v.}\int\limits_{\mathbb R^2} \frac{p^i(x',y')\,dx'dy'}{\sqrt{(x-x')^2+(y-y')^2}},
