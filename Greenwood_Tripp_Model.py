@@ -162,7 +162,8 @@ def get_displacement_from_p(p_vals, r_grid, Estar, integration_limit):
 
 def plot_state(r, p, z, w, Radius, sigma, pstar, title="Current state", filename=None):
     """Visualize current solution state"""
-    fig, ax = plt.subplots(1, 3, figsize=(5.1, 1.6))
+    # fig, ax = plt.subplots(1, 3, figsize=(5.1, 1.6))
+    fig, ax = plt.subplots(1, 3, figsize=(10, 3))
     fig.suptitle(title)
     
     # Pressure distribution
@@ -206,8 +207,8 @@ nu = 0.3                # Poisson's ratio
 Estar = E / (2 * (1 - nu**2))
 
 # Roughness parameters
-sigma = 2e-6            # RMS roughness (m)
-eta = 2e4 * 1e6         # Asperity density (1/m²)
+sigma = 20e-6            # RMS roughness (m)
+eta = 2e2 * 1e6         # Asperity density (1/m²)
 beta = 0.3e-4           # Asperity tip radius (m)
 mu = (4.0/3.0) * eta * Estar * np.sqrt(beta)
 chi = np.pi * eta * beta
@@ -230,7 +231,7 @@ max_iter = 100
 
 if ind_type == 'sphere':
     params = [Radius]
-    integration_limit = 0.1 * Radius
+    integration_limit = 0.3 * Radius
 elif ind_type == 'flat':
     fillet_radius = 0.05
     params = [Radius, fillet_radius]
@@ -277,7 +278,8 @@ for it in range(max_iter):
     
     print(f"\rIteration {it+1:03d}/{max_iter}, Error: {eps:.2e}", end='', flush=True)
     
-    if eps < tolerance:
+    # Since we use relaxation, we check convergence based on the adjusted tolerance
+    if eps < kappa * tolerance:
         print(f"\nConverged in {it+1} iterations (error: {eps:.2e})")
         break
 else:
@@ -295,7 +297,7 @@ if ind_type == 'sphere':
     p0 = (3 * force_computed) / (2 * np.pi * a_computed**2)
     ref_r = np.linspace(0, a_computed, 100)
     ref_pressure = p0 * np.sqrt(1 - (ref_r / a_computed)**2)
-    print(f"Roughness parameter σR/a²: {sigma*Radius/a_computed**2:.3f}")
+    print(f"Roughness parameter sigma*R/a^2: {sigma*Radius/a_computed**2:.3f}")
 elif ind_type == 'flat':
     p0 = force_computed / (np.pi * Radius**2)
     ref_r = np.linspace(0, Radius*(1-1e-4), 100)

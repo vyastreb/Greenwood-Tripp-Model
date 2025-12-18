@@ -28,7 +28,7 @@ This average pressure is used to induce macroscopic deformation following Boussi
 u^i(x,y) = \frac{1}{\pi E^*}\;\text{p.v.}\int\limits_{\mathbb R^2} \frac{p^i(x',y')\,dx'dy'}{\sqrt{(x-x')^2+(y-y')^2}},
  \label{eq:gt2}
 \end{equation}
-where p.v. denotes principal value of the integral. Then the separation between the surfaces is updated $z^{i+1}_0 = z^i_0 + u$, new pressure $p^{i+1}$ is recomputed \eqref{eq:gt1} as well as the induced displacement $z^{i+1}$ from \eqref{eq:gt2}.
+where p.v. denotes principal value of the integral. Then the separation between the surfaces is updated $z^{i+1}_0 = z^i_0 + u^i$, new pressure $p^{i+1}$ is recomputed \eqref{eq:gt1} as well as the induced displacement $u^{i+1}$ from \eqref{eq:gt2}.
 For an axisymmetric problem, a simpler form is available [2][see Eq. (3.96a)]:
 \begin{equation}
     u_z(r) = \frac{4}{\pi E^*} \int_0^\infty \frac{\rho}{\rho + r} \, p(\rho) \, K(k(r,\rho)) \, d\rho
@@ -49,14 +49,17 @@ $$
 \lambda = \frac{\sigma R}{a^2} \approx 0.361,
 $$
 placing this problem in the class of problems where the deviation from the Hertz theory is significant.
-The iterative algorithm converges in 13 iterations for the tolerance of $\epsilon=10^{-3}$ defined by
+We use a relaxation technique by weighting the obtained displacement as
 $$
-\frac{\|u_{k+1}-u_k\|_{\infty}}{\|u_k\|_{\infty}+10^{-20}} \le \epsilon.
+ u'_{k+1} = \kappa u_{k+1} + (1-\kappa) u_{k},
 $$
-We use some relaxation technique by weighting the obtained displacement as
+Therefore, the change in displacement $u'_{k+1} - u'_k = \kappa(u_{k+1}-u_{k})$ and for the convergence we will require that
 $$
- u_{k+1} = \kappa u_{k+1} + (1-\kappa) u_{k}.
+\frac{\|u_{k+1}-u_k\|_{\infty}}{\|u_k\|_{\infty}+\varepsilon_0} \le \epsilon \quad \Leftrightarrow \quad
+\frac{\|u'_{k+1}-u_k\|_{\infty}}{\|u_k\|_{\infty}+\varepsilon_0} \le \kappa\epsilon,
 $$
+where $\varepsilon_0$ is a small parameter, set by default to $10^{-20}$, and used to avoid division by zero.
+The iterative algorithm converges in 17 iterations for the tolerance of $\epsilon=10^{-3}$ defined by
 The obtained pressure and contact area distribution are shown in \Cref{fig:1}.
 In \Cref{fig:2} the resulting pressure, deformed configuration and the resulting surface displacement are shown.
 
