@@ -46,9 +46,10 @@ At the convergence separation $z^*(x,y)$, we have the information about contact 
 
 For the set of parameters provided in \Cref{tab:1}, the roughness parameter [3] can be evaluated
 $$
-\lambda = \frac{\sigma R}{a^2} \approx 0.361,
+\alpha = \frac{\sigma R}{a^2} \approx 0.361,
 $$
 placing this problem in the class of problems where the deviation from the Hertz theory is significant.
+
 We use a relaxation technique by weighting the obtained displacement as
 $$
  u'_{k+1} = \kappa u_{k+1} + (1-\kappa) u_{k},
@@ -60,8 +61,7 @@ $$
 $$
 where $\varepsilon_0$ is a small parameter, set by default to $10^{-20}$, and used to avoid division by zero.
 The iterative algorithm converges in 17 iterations for the tolerance of $\epsilon=10^{-3}$ defined by
-The obtained pressure and contact area distribution are shown in \Cref{fig:1}.
-In \Cref{fig:2} the resulting pressure, deformed configuration and the resulting surface displacement are shown.
+The obtained pressure, contact area distribution, deformed configuration and the resulting surface displacement are shown in \Cref{fig:1} and compared with the reference Hertz solution for the same load.
 
 
 \begin{table}[h]
@@ -97,14 +97,11 @@ Relaxation parameter & $\kappa$ & 0.2 & (-) & \\
 \end{table}
 
 \begin{figure}
-\includegraphics[width=1\textwidth]{Final_pressure_ind_type_sphere_approach_-2.00.pdf}
-\caption{\label{fig:1}Pressure and true contact area distribution for rough contact compared with the Hertz solution.}
+\includegraphics[width=1\textwidth]{Current_state_ind_type_sphere_approach_-2.00_iter.pdf}
+\caption{\label{fig:1}
+Converged pressure distribution and the corresponding Hertzian pressure (left column, upper pane); initial penetration (dashed line) and the resulting indenter's configuration for Greenwood-Tripp and Hertzian configuration (right column, upper panel); vertical displacement of Greenwood-Tripp and Hertzian displacement (left column, lower panel); contact area fraction for Greenwood-Tripp model (right column, lower panel).}
 \end{figure}
 
-\begin{figure}
-\includegraphics[width=1\textwidth]{Current_state_ind_type_sphere_approach_-2.00_iter.pdf}
-\caption{\label{fig:2}Converged pressure distribution (first column), initial penetration (dashed line) and the resulting indenter's configuration (middle column), converged vertical displacement.}
-\end{figure}
 
 ## References
 

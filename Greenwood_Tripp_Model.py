@@ -11,10 +11,10 @@ References:
 
 + Eq. (4) in [A] seems to be incorrect. An appropriate equation from Johnson's book [B] is used instead (integral of Eq. (3.96a) in [B]).
 
-Author: V.A. Yastrebov (Mines Paris - PSL, CNRS)
-Date: September-October 2025
+Author: Vladislav A. Yastrebov (Mines Paris - PSL, CNRS)
+Date: September-December 2025
 License: BSD 3-Clause License
-AI usage: Claude Sonnet 4.5 for final cleanup and optimization, the core code written by author
+AI usage: Claude Sonnet 4.5 for final cleanup and optimization, the core code is written by the author.
 """
 
 import numpy as np
@@ -28,7 +28,7 @@ from matplotlib.collections import PatchCollection
 # LaTeX-style plots
 plt.rc('text', usetex=True)
 plt.rc('font', family='serif')
-plt.rcParams.update({'font.size': 10})
+plt.rcParams.update({'font.size': 11})
 
 
 @njit(parallel=True)
@@ -160,45 +160,84 @@ def get_displacement_from_p(p_vals, r_grid, Estar, integration_limit):
     return result if r.ndim > 0 else result[0]
 
 
-def plot_state(r, p, z, w, Radius, sigma, pstar, title="Current state", filename=None):
+def plot_state(r, p, z, w, Radius, sigma, pstar, title="Current state", filename=None, set_limits=False):
     """Visualize current solution state"""
-    # fig, ax = plt.subplots(1, 3, figsize=(5.1, 1.6))
-    fig, ax = plt.subplots(1, 3, figsize=(10, 3))
-    fig.suptitle(title)
-    
+    fig, ax = plt.subplots(2, 2, figsize=(5.61, 5.61))
+    # fig, ax = plt.subplots(2, 2, figsize=(10, 3))
+    # fig.suptitle(title)
+
+    # Compute associated Hertz solution
+    force_computed = 2 * np.pi * integrate.simpson(p * r, x=r)
+    a_computed = ((3 * force_computed * Radius) / (4 * Estar))**(1/3)
+    p0 = (3 * force_computed) / (2 * np.pi * a_computed**2)
+    ref_r = np.linspace(0, a_computed, 100)
+    ref_pressure = p0 * np.sqrt(1 - (ref_r / a_computed)**2)
+
+    # Prolongate Hertzian displacement for comparison
+    r_prolongation = np.concatenate([ref_r, np.linspace(a_computed, np.max(r), 100)])
+    hertz_pressure = np.concatenate([ref_pressure, np.zeros(100)])
+    hertz_disp =  get_displacement_from_p(hertz_pressure, r_prolongation, Estar, np.max(r))
+
     # Pressure distribution
-    ax[0].grid()
-    ax[0].plot(r/Radius, p/pstar, "-", label="Pressure")
-    ax[0].set_ylabel(r"Normalized pressure, $p/\bar{p}$")
-    ax[0].set_xlabel(r"Normalized radial coordinate, $r/R$")
-    ax[0].legend()
+    ax[0,0].grid()
+    ax[0,0].plot(r/Radius, p/pstar, "-", label="Rough")
+    ax[0,0].plot(ref_r/Radius, ref_pressure/pstar, "r--", label="Hertzian")
+    ax[0,0].set_ylabel(r"Normalized pressure, $p/\bar{p}$")
+    ax[0,0].set_xlabel(r"Normalized radial coordinate, $r/R$")
+    if set_limits:
+        ax[0,0].set_xlim(0, np.max(r)/Radius)
+        ax[0,0].set_ylim(0, max(np.max(p), np.max(ref_pressure))*1.1/pstar)
+    ax[0,0].legend()
     
     # Surface configuration
-    ax[1].grid()
-    ax[1].plot(r/Radius, z/sigma, "--", color="k", label="Reference shape")
-    ax[1].plot(r/Radius, (z+w)/sigma, "-", color="#1f77b4", label="Deformed shape", zorder=3)
-    ax[1].axhline(0, color='grey', linestyle='--', alpha=1.0, label="Mean surface")
-    for mult, alpha in [(1, 0.5), (2, 0.25), (3, 0.125)]:
-        ax[1].axhline(mult, color='grey', linestyle='--', alpha=alpha)
-    ax[1].set_ylabel(r"Normalized configuration, $z/\sigma$")
-    ax[1].set_xlabel(r"Normalized radial coordinate, $r/R$")
-    ax[1].legend()
+    ax[0,1].grid()
+    if set_limits:
+        ax[0,1].set_xlim(0, np.max(r)/Radius)
+        ax[0,1].set_ylim(-2, 10)
+    ax[0,1].axhline(0, color='grey', linestyle='--', alpha=1.0, label="__")
+    ax[0,1].plot(r/Radius, z/sigma, "--", color="k", label="Reference")
+    ax[0,1].plot(r/Radius, (z+w)/sigma, "-", color="#1f77b4", label="Rough", 
+    zorder=3)
+    def_hertz = r_prolongation**2/(2*Radius) - 2*sigma + hertz_disp
+    ax[0,1].plot(r_prolongation/Radius, def_hertz/sigma, "r--", label="Hertzian", zorder=2)
+    # for mult, alpha in [(1, 0.5), (2, 0.25), (3, 0.125)]:
+    #     ax[0,1].axhline(mult, color='grey', linestyle='--', alpha=alpha)
+    ax[0,1].set_ylabel(r"Normalized configuration, $z/\sigma$")
+    ax[0,1].set_xlabel(r"Normalized radial coordinate, $r/R$")
+    ax[0,1].legend()
     
     # Displacement
-    ax[2].grid()
-    ax[2].plot(r/Radius, w/sigma, label="Displacement")
-    ax[2].set_ylabel(r"Normalized displacement, $u/\sigma$")
-    ax[2].set_xlabel(r"Normalized radial coordinate, $r/R$")
-    ax[2].legend()
+    ax[1,0].grid()
+    if set_limits:
+        ax[1,0].set_xlim(0, np.max(r)/Radius)
+        ax[1,0].set_ylim(0, 3.5)
+    ax[1,0].plot(r/Radius, w/sigma, label="Rough")
+    ax[1,0].plot(r_prolongation/Radius, hertz_disp/sigma, "r--", label="Hertzian")
+
+    ax[1,0].set_ylabel(r"Normalized displacement, $u/\sigma$")
+    ax[1,0].set_xlabel(r"Normalized radial coordinate, $r/R$")
+    ax[1,0].legend()
     
+    # Contact area fraction
+    area_fraction = chi * F1(z + w, sigma)
+    ax[1,1].grid()
+    if set_limits:
+        ax[1,1].set_xlim(0, np.max(r)/Radius)
+        ax[1,1].set_ylim(1e-10, np.max(area_fraction) * 10)
+    ax[1,1].set_yscale('log')
+    ax[1,1].plot(r/Radius, area_fraction, color="green", label="Area fraction")
+    ax[1,1].set_ylabel("Area fraction")
+    ax[1,1].set_xlabel(r"Normalized radial coordinate, $r/R$")
+    ax[1,1].legend()
+
     plt.tight_layout()
     if filename:
-        fig.savefig(filename)
+        fig.savefig(filename, bbox_inches='tight', pad_inches=0)
     return fig
 
 
 # =============================================================================
-# PARAMETERS
+#         PARAMETERS
 # =============================================================================
 
 # Material properties
@@ -220,13 +259,13 @@ Radius = 0.01           # Indenter radius (m)
 # Numerical parameters
 d = -2 * sigma          # Initial separation (m)
 pstar = Estar * np.sqrt(sigma / Radius)
-Np = 30                 # Grid points
+Np = 100                 # Grid points
 kappa = 0.2             # Relaxation factor
 tolerance = 1e-3        # Convergence tolerance
 max_iter = 100
 
 # =============================================================================
-# SETUP
+#       SETUP
 # =============================================================================
 
 if ind_type == 'sphere':
@@ -255,7 +294,7 @@ w_new = get_displacement_from_p(p, r, Estar, integration_limit)
 plot_state(r, p, w0, w_new, Radius, sigma, pstar, "Initial state")
 
 # =============================================================================
-# ITERATIVE SOLUTION
+#       ITERATIVE SOLVER
 # =============================================================================
 
 h = d + indenter_shape(r, ind_type, params)
@@ -286,7 +325,7 @@ else:
     print(f"\nWarning: Max iterations reached (error: {eps:.2e})")
 
 # =============================================================================
-# RESULTS
+#       RESULTS
 # =============================================================================
 
 force_computed = 2 * np.pi * integrate.simpson(p * r, x=r)
@@ -339,14 +378,14 @@ if ind_type == 'sphere':
     idx = np.searchsorted(r, 3*a_computed)
     plot_state(r[:idx], p[:idx], w0[:idx], w[:idx], Radius, sigma, pstar,
                fr"Converged Solution, $d/\sigma={d/sigma:.2f}$",
-               f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf")
+               f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf", set_limits=True)
 else:
     plot_state(r, p, w0, w, Radius, sigma, pstar,
                fr"Converged Solution, $d/\sigma={d/sigma:.2f}$",
-               f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf")
+               f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf", set_limits=True)
 
 # =============================================================================
-# CONTACT AREA VISUALIZATION
+#       CONTACT AREA VISUALIZATION
 # =============================================================================
 
 if ind_type == 'sphere':
