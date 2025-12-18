@@ -6,8 +6,8 @@ This is a Python implementation of Greenwood-Tripp rough elastic contact model i
 
 Note that Eq. in [1] seems to be incorrect. An appropriate equation from Johnson's book [2] is used instead (integral of Eq. (3.96a) in [2]).
 
-[1] Greenwood, J.A. and Tripp, J.H., The Elastic Contact of Rough Spheres, Journal of Applied Mechanics, 34(1), p.153-159 (1967).
-[2] Johnson, K.L., Contact Mechanics, Cambridge University Press (1985). Ninth printing 2003.
++ [1] Greenwood, J.A. and Tripp, J.H., The Elastic Contact of Rough Spheres, Journal of Applied Mechanics, 34(1), p.153-159 (1967).
++ [2] Johnson, K.L., Contact Mechanics, Cambridge University Press (1985). Ninth printing 2003.
 
 ## Input parameters
 
@@ -35,4 +35,5 @@ Parameters have to be provided in the code.
 
 + **Author:** Vladislav A. Yastrebov (CNRS, Mines Paris - PSL)
 + **License:** BSD-3 clause
++ **Date:** Nov-Dec 2025
 + **AI-usage:** Copilot in VScode with different models was used for simple adjustments
