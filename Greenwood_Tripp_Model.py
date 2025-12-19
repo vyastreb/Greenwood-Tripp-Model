@@ -456,9 +456,9 @@ Radius = 0.01           # Indenter radius (m)
 pstar = Estar * np.sqrt(sigma / Radius) # Pressure normalization
 
 # Numerical parameters
-Penetration = np.array([0, -1 * sigma, -2 * sigma])          # Initial separation (m)
-
+## Initial separation
 Penetration = np.linspace(2*sigma, -3*sigma, 5)  # Multiple approach steps
+# Penetration = np.array([0.*sigma])
 
 Np = 20                 # Grid points
 kappa = 0.3              # Relaxation factor
@@ -466,6 +466,7 @@ tolerance = 1e-3         # Convergence tolerance
 max_iter = 100
 
 PLOT_STATE = False      # Plot current state at each approach step
+SAVE_STEPS = True       # Save npz data at each approach step
 
 # =============================================================================
 #       SETUP
@@ -575,7 +576,7 @@ for d in Penetration:
         print("\nGenerating contact area visualization...")
         
         dx = np.sqrt(1/eta)
-        extent = 2.0
+        extent = 3.0
         x_coarse = np.arange(-extent*a_computed, extent*a_computed+dx, dx)
         y_coarse = np.arange(-extent*a_computed, extent*a_computed+dx, dx)
         Xc, Yc = np.meshgrid(x_coarse, y_coarse, indexing='ij')
@@ -587,6 +588,7 @@ for d in Penetration:
         
         fig, ax = plt.subplots(figsize=(6, 6))
         # Use fixed extent normalized by Radius to see evolution
+        plot_extent_norm = 0.2
         ax.set_xlim(-plot_extent_norm, plot_extent_norm)
         ax.set_ylim(-plot_extent_norm, plot_extent_norm)
         ax.set_xlabel(r"Normalized X coordinate, $x/R$")
@@ -622,12 +624,31 @@ for d in Penetration:
         ax.add_artist(plt.Circle((0, 0), a_computed/Radius, color='k', fill=False, linestyle='--',
                                 label='Hertzian contact radius, $a$', zorder=3))
         ax.add_artist(plt.Circle((0, 0), holm_radius/Radius, color='red', fill=False,
-                                linestyle='--', label="Holm's radius", zorder=3))
+                                linestyle='--', label="Greenwood-Holm radius", zorder=3))
         
         ax.legend()
         ax.set_aspect('equal')
         plt.tight_layout()
         plt.savefig(f"Contact_area_ind_type_{ind_type}_approach_{d/sigma:.2f}.pdf") 
         # plt.show()
+
+    if SAVE_STEPS:
+        filename_npz = f"Results_ind_type_{ind_type}_approach_{d/sigma:.2f}.npz"
+        print(f"Saving results to {filename_npz}")
+        
+        data_to_save = {
+            'r': r, 'p': p, 'w': w, 'h': h,
+            'd': d, 'Radius': Radius,
+            'E': E, 'nu': nu, 'Estar': Estar,
+            'sigma': sigma, 'eta': eta, 'beta': beta, 'mu': mu, 'chi': chi,
+            'force': force_computed
+        }
+        
+        if 'holm_radius' in locals():
+            data_to_save['holm_radius'] = holm_radius
+        if 'a_computed' in locals():
+            data_to_save['a_computed'] = a_computed
+            
+        np.savez(filename_npz, **data_to_save)
 
 print("\nSimulation complete!")
