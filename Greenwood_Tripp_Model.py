@@ -20,7 +20,7 @@ AI usage: Claude Sonnet 4.5 for final cleanup and optimization, the core code is
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import integrate
-from scipy.special import ellipk
+from scipy.special import ellipk,erfc
 from numba import njit, prange
 from matplotlib.patches import CirclePolygon
 from matplotlib.collections import PatchCollection
@@ -28,7 +28,7 @@ from matplotlib.collections import PatchCollection
 # LaTeX-style plots
 plt.rc('text', usetex=True)
 plt.rc('font', family='serif')
-plt.rcParams.update({'font.size': 11})
+plt.rcParams.update({'font.size': 10})
 
 
 @njit(parallel=True)
@@ -108,11 +108,12 @@ def F_integral(u, sigma, power):
         sigma: RMS roughness
         power: exponent (1.5 for F_{3/2}, 1.0 for F_1)
     """
-    if u > 20 * sigma:
+    cutoff_factor = 20
+    if u > cutoff_factor * sigma:
         return 0.0
     
     integrand = lambda z: (z - u)**power * probability_density(z, sigma)
-    result, _ = integrate.quad(integrand, u, u + 10*sigma, epsabs=1e-8, epsrel=1e-8)
+    result, _ = integrate.quad(integrand, u, u + cutoff_factor * sigma, epsabs=1e-8, epsrel=1e-8)
     return result
 
 
@@ -183,7 +184,7 @@ def plot_state(r, p, z, w, Radius, sigma, pstar, title="Current state", filename
     ax[0,0].plot(r/Radius, p/pstar, "-", label="Rough")
     ax[0,0].plot(ref_r/Radius, ref_pressure/pstar, "r--", label="Hertzian")
     ax[0,0].set_ylabel(r"Normalized pressure, $p/\bar{p}$")
-    ax[0,0].set_xlabel(r"Normalized radial coordinate, $r/R$")
+    ax[0,0].set_xlabel(r"Normalized radial coordinate, $\frac r R$")
     if set_limits:
         ax[0,0].set_xlim(0, np.max(r)/Radius)
         ax[0,0].set_ylim(0, max(np.max(p), np.max(ref_pressure))*1.1/pstar)
@@ -203,7 +204,7 @@ def plot_state(r, p, z, w, Radius, sigma, pstar, title="Current state", filename
     # for mult, alpha in [(1, 0.5), (2, 0.25), (3, 0.125)]:
     #     ax[0,1].axhline(mult, color='grey', linestyle='--', alpha=alpha)
     ax[0,1].set_ylabel(r"Normalized configuration, $z/\sigma$")
-    ax[0,1].set_xlabel(r"Normalized radial coordinate, $r/R$")
+    ax[0,1].set_xlabel(r"Normalized radial coordinate, $\frac r R$")
     ax[0,1].legend()
     
     # Displacement
@@ -215,20 +216,37 @@ def plot_state(r, p, z, w, Radius, sigma, pstar, title="Current state", filename
     ax[1,0].plot(r_prolongation/Radius, hertz_disp/sigma, "r--", label="Hertzian")
 
     ax[1,0].set_ylabel(r"Normalized displacement, $u/\sigma$")
-    ax[1,0].set_xlabel(r"Normalized radial coordinate, $r/R$")
+    ax[1,0].set_xlabel(r"Normalized radial coordinate, $\frac r R$")
     ax[1,0].legend()
     
     # Contact area fraction
     area_fraction = chi * F1(z + w, sigma)
+
+    delta = 2 * sigma
+    zp = (r**2/(2*Radius) - delta)/sigma
+    asymptotic_area_fraction =  chi * (sigma / np.sqrt(2*np.pi) * np.exp(- r**4/(8 * sigma**2 * Radius**2)) * np.exp(r**2 * delta/(2*Radius*sigma**2)) * np.exp(-delta**2/(2*sigma**2))  - 0.5 * sigma * zp * erfc(zp / np.sqrt(2))) #* np.exp(r**2 * delta/(2*Radius*sigma**2)) * np.exp(-delta**2/(2*sigma**2))
+
+    asymptotic_area_fraction =  chi * sigma / np.sqrt(2*np.pi) * np.exp(- r**4/(8 * sigma**2 * Radius**2))
+    asymptotic_area_fraction =  chi * (sigma / np.sqrt(2*np.pi) * np.exp(- zp**2 / 2) - 0.5 * sigma * zp * erfc(zp / np.sqrt(2)))
+
+    asymptotic_area_fraction[r/Radius < 0.1] = np.nan
+
     ax[1,1].grid()
     if set_limits:
         ax[1,1].set_xlim(0, np.max(r)/Radius)
         ax[1,1].set_ylim(1e-10, np.max(area_fraction) * 10)
     ax[1,1].set_yscale('log')
-    ax[1,1].plot(r/Radius, area_fraction, color="green", label="Area fraction")
-    ax[1,1].set_ylabel("Area fraction")
-    ax[1,1].set_xlabel(r"Normalized radial coordinate, $r/R$")
+    ax[1,1].plot(r/Radius, area_fraction, color="green", label="Rough")
+    ax[1,1].plot(r/Radius, asymptotic_area_fraction, "k--", label="Asymptotic")
+    ax[1,1].set_ylabel("Contact area fraction")
+    ax[1,1].set_xlabel(r"Normalized radial coordinate, $\frac r R$")
     ax[1,1].legend()
+
+    # Add subplot labels
+    letters = ['(a)', '(b)', '(c)', '(d)']
+    for i in range(2):
+        for j in range(2):
+            ax[i, j].text(-0.1, 1.05, letters[i*2+j], transform=ax[i, j].transAxes, fontweight='bold')
 
     plt.tight_layout()
     if filename:

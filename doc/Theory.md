@@ -19,10 +19,10 @@ To make a truly predictive model linking contact area and force in contact of ro
 
 The main feature of the model is that it solves the problem in an iterative way by computing pressures from the separation field using multi-asperity model, then it computes induced displacements using integral convolution, recomputing separations and so on before the convergence. The pressure $p^i(x,y)$ induced by asperity contact based on a statistical multi-asperity model for the separation $z^i_0(x,y)$ between two surfaces is given by the following equation
 \begin{equation}
- p^i(x,y) = \tfrac{4}{3} \eta E^* r^{1/2}  \int\limits_{z^i_0(x,y)}^\infty (z-z^i_0(x,y))^{3/2}P(z) \,dz,
+ p^i(x,y) = \tfrac{4}{3} \eta E^* \beta^{1/2}  \int\limits_{z^i_0(x,y)}^\infty (z-z^i_0(x,y))^{3/2}P(z) \,dz,
  \label{eq:gt1}
 \end{equation}
-where $\eta$ is the asperity density (\SI{}{m^{-2}}), $r$ (\SI{}{m}) their average geometrically mean curvature radius and $P(z)$ (\SI{}{m^{-1}}) is the probability density of asperity heights.
+where $\eta$ is the asperity density (\SI{}{m^{-2}}), $\beta$ (\SI{}{m}) their average geometrically mean curvature radius and $P(z)$ (\SI{}{m^{-1}}) is the probability density of asperity heights.
 This average pressure is used to induce macroscopic deformation following Boussinesq approach, the total induced displacement (summing both sides) is given by
 \begin{equation}
 u^i(x,y) = \frac{1}{\pi E^*}\;\text{p.v.}\int\limits_{\mathbb R^2} \frac{p^i(x',y')\,dx'dy'}{\sqrt{(x-x')^2+(y-y')^2}},
@@ -39,7 +39,7 @@ k(r,\rho) = \frac{4\rho r}{(r + \rho)^2}, \quad K(k) = \int_0^{\pi/2}[1-k\sin^2(
 \end{equation}
 At the convergence separation $z^*(x,y)$, we have the information about contact area fraction, which can be computed as 
 \begin{equation}
-    A^*(x,y) = \pi \eta r \int\limits_{z^*}^\infty (z^*-z) P(z)\,dz.
+    A^*(x,y) = \pi \eta \beta \int\limits_{z^*}^\infty (z^*-z) P(z)\,dz.
 \end{equation}
 
 ## Example
@@ -54,13 +54,13 @@ We use a relaxation technique by weighting the obtained displacement as
 $$
  u'_{k+1} = \kappa u_{k+1} + (1-\kappa) u_{k},
 $$
-Therefore, the change in displacement $u'_{k+1} - u'_k = \kappa(u_{k+1}-u_{k})$ and for the convergence we will require that
+Therefore, the change in displacement $u'_{k+1} - u_k = \kappa(u_{k+1}-u_{k})$ and for the convergence we will require that
 $$
 \frac{\|u_{k+1}-u_k\|_{\infty}}{\|u_k\|_{\infty}+\varepsilon_0} \le \epsilon \quad \Leftrightarrow \quad
 \frac{\|u'_{k+1}-u_k\|_{\infty}}{\|u_k\|_{\infty}+\varepsilon_0} \le \kappa\epsilon,
 $$
 where $\varepsilon_0$ is a small parameter, set by default to $10^{-20}$, and used to avoid division by zero.
-The iterative algorithm converges in 17 iterations for the tolerance of $\epsilon=10^{-3}$ defined by
+The iterative algorithm converges in 17 iterations for the tolerance of $\epsilon=10^{-3}$.
 The obtained pressure, contact area distribution, deformed configuration and the resulting surface displacement are shown in \Cref{fig:1} and compared with the reference Hertz solution for the same load.
 
 
