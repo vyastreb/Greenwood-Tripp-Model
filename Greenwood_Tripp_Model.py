@@ -51,6 +51,64 @@ def compute_holm_radius(Xc, Yc, Ac):
     return 1.0 / alpha_inv / 2.0
 
 
+@njit(fastmath=True)
+def F32_numba_single(u, sigma):
+    """
+    Compute F_{3/2} integral using Simpson's rule
+    Range [u, u + 20*sigma]
+    """
+    z_start = u
+    z_end = u + 20.0 * sigma
+    num_points = 201  # Odd number for Simpson's rule
+    dz = (z_end - z_start) / (num_points - 1)
+    
+    res = 0.0
+    inv_sqrt_2pi_sigma = 1.0 / (np.sqrt(2 * np.pi) * sigma)
+    two_sigma_sq = 2 * sigma**2
+    
+    for i in range(num_points):
+        z = z_start + i * dz
+        val = (z - u)**1.5 * np.exp(-z**2 / two_sigma_sq)
+        
+        weight = 2.0 if i % 2 == 0 else 4.0
+        if i == 0 or i == num_points - 1:
+            weight = 1.0
+        res += weight * val
+        
+    return res * dz / 3.0 * inv_sqrt_2pi_sigma
+
+
+@njit(parallel=True)
+def F32_numba(h, sigma):
+    """Vectorized F_{3/2} integral using Numba"""
+    res = np.empty(h.shape, dtype=np.float64)
+    for i in prange(h.shape[0]):
+        res[i] = F32_numba_single(h[i], sigma)
+    return res
+
+
+def F1_analytical(h, sigma):
+    """Analytical solution for F_1 integral"""
+    return sigma / np.sqrt(2*np.pi) * np.exp(-h**2/(2*sigma**2)) - 0.5 * h * erfc(h/(np.sqrt(2)*sigma))
+
+
+def compute_influence_matrix(r_grid, Estar, integration_limit):
+    """Precompute influence matrix for displacement calculation"""
+    n = len(r_grid)
+    M = np.zeros((n, n))
+    print("Precomputing influence matrix...")
+    for i in range(n):
+        # Unit pressure at node i
+        p_vec = np.zeros(n)
+        p_vec[i] = 1.0
+        # Compute displacement
+        u_vec = get_displacement_from_p(p_vec, r_grid, Estar, integration_limit)
+        M[:, i] = u_vec
+        print(f"\rColumn {i+1}/{n}", end="", flush=True)
+    print("\nDone.")
+    return M
+
+
 def indenter_shape(r, indenter_type, params):
     """
     Define indenter geometry
@@ -220,7 +278,7 @@ def plot_state(r, p, z, w, Radius, sigma, pstar, title="Current state", filename
     ax[1,0].legend()
     
     # Contact area fraction
-    area_fraction = chi * F1(z + w, sigma)
+    area_fraction = chi * F1_analytical(z + w, sigma)
 
     delta = 2 * sigma
     zp = (r**2/(2*Radius) - delta)/sigma
@@ -275,9 +333,10 @@ ind_type = 'sphere'
 Radius = 0.01           # Indenter radius (m)
 
 # Numerical parameters
-d = -2 * sigma          # Initial separation (m)
+Penetration = np.array([0, -1 * sigma, -2 * sigma])          # Initial separation (m)
+# Penetration = np.array([-2 * sigma])          # Initial separation (m)
 pstar = Estar * np.sqrt(sigma / Radius)
-Np = 100                 # Grid points
+Np = 20                 # Grid points
 kappa = 0.3              # Relaxation factor
 tolerance = 1e-3         # Convergence tolerance
 max_iter = 100
@@ -301,163 +360,135 @@ r = np.linspace(0, integration_limit, Np)
 w = np.zeros_like(r)
 w_old = np.zeros_like(r)
 
-# Initial configuration
-w0 = d + indenter_shape(r, ind_type, params)
-w = w0.copy()
-p = mu * F32(w, sigma)
-
-print(f"Initial max pressure: {np.max(p):.2e} Pa")
-
-w_new = get_displacement_from_p(p, r, Estar, integration_limit)
-plot_state(r, p, w0, w_new, Radius, sigma, pstar, "Initial state")
+# Precompute influence matrix
+M_influence = compute_influence_matrix(r, Estar, integration_limit)
 
 # =============================================================================
 #       ITERATIVE SOLVER
 # =============================================================================
+for d in Penetration:
+    print(f"\nStarting simulation for approach d = {d/sigma:.2f} * sigma")
 
-h = d + indenter_shape(r, ind_type, params)
-eps_old = 1e10
-
-print("\nStarting iterations...")
-for it in range(max_iter):
-    w_new = get_displacement_from_p(p, r, Estar, integration_limit)
-    w = kappa * w_new + (1 - kappa) * w_old
-    h += (w - w_old)
-    p = mu * F32(h, sigma)
+    # # Initial configuration
+    w0 = d + indenter_shape(r, ind_type, params)
     
-    eps = np.max(np.abs(w - w_old) / kappa) / (np.max(np.abs(w_old)) + 1e-20)
+    h = d + indenter_shape(r, ind_type, params) + w
+    p = mu * F32_numba(h, sigma)
     w_old = w.copy()
-    
-    if it > 2 and eps > eps_old * 1.01:
-        kappa = max(kappa * 0.5, 0.01)
-        print(f"\nReducing relaxation to {kappa:.3f}")
-    eps_old = eps
-    
-    print(f"\rIteration {it+1:03d}/{max_iter}, Error: {eps:.2e}", end='', flush=True)
-    
-    # Since we use relaxation, we check convergence based on the adjusted tolerance
-    if eps < kappa * tolerance:
-        print(f"\nConverged in {it+1} iterations (error: {eps:.2e})")
-        break
-else:
-    print(f"\nWarning: Max iterations reached (error: {eps:.2e})")
+    eps_old = 1e10
 
-# =============================================================================
-#       RESULTS
-# =============================================================================
+    print("\nStarting iterations...")
+    for it in range(max_iter):
+        w_new = M_influence @ p
+        w = kappa * w_new + (1 - kappa) * w_old
+        h += (w - w_old)
+        p = mu * F32_numba(h, sigma)
+        
+        eps = np.max(np.abs(w - w_old) / kappa) / (np.max(np.abs(w_old)) + 1e-20)
+        w_old = w.copy()
+        
+        if it > 2 and eps > eps_old * 1.01:
+            kappa = max(kappa * 0.5, 0.01)
+            print(f"\nReducing relaxation to {kappa:.3f}")
+        eps_old = eps
+        
+        print(f"\rIteration {it+1:03d}/{max_iter}, Error: {eps:.2e}", end='', flush=True)
+        
+        # Since we use relaxation, we check convergence based on the adjusted tolerance
+        if eps < kappa * tolerance:
+            print(f"\nConverged in {it+1} iterations (error: {eps:.2e})")
+            break
+    else:
+        print(f"\nWarning: Max iterations reached (error: {eps:.2e})")
 
-force_computed = 2 * np.pi * integrate.simpson(p * r, x=r)
-print(f"\nComputed force: {force_computed:.3f} N")
+    # ========================================================================
+    #       RESULTS
+    # ========================================================================
 
-if ind_type == 'sphere':
-    a_computed = ((3 * force_computed * Radius) / (4 * Estar))**(1/3)
-    p0 = (3 * force_computed) / (2 * np.pi * a_computed**2)
-    ref_r = np.linspace(0, a_computed, 100)
-    ref_pressure = p0 * np.sqrt(1 - (ref_r / a_computed)**2)
-    print(f"Roughness parameter sigma*R/a^2: {sigma*Radius/a_computed**2:.3f}")
-elif ind_type == 'flat':
-    p0 = force_computed / (np.pi * Radius**2)
-    ref_r = np.linspace(0, Radius*(1-1e-4), 100)
-    ref_pressure = 0.5 * p0 / np.sqrt(1 - ref_r**2 / Radius**2)
+    force_computed = 2 * np.pi * integrate.simpson(p * r, x=r)
+    print(f"\nComputed force: {force_computed:.3f} N")
 
-area_fraction = chi * F1(h, sigma)
+    if ind_type == 'sphere':
+        a_computed = ((3 * force_computed * Radius) / (4 * Estar))**(1/3)
+        p0 = (3 * force_computed) / (2 * np.pi * a_computed**2)
+        ref_r = np.linspace(0, a_computed, 100)
+        ref_pressure = p0 * np.sqrt(1 - (ref_r / a_computed)**2)
+        print(f"Roughness parameter sigma*R/a^2: {sigma*Radius/a_computed**2:.3f}")
+    elif ind_type == 'flat':
+        p0 = force_computed / (np.pi * Radius**2)
+        ref_r = np.linspace(0, Radius*(1-1e-4), 100)
+        ref_pressure = 0.5 * p0 / np.sqrt(1 - ref_r**2 / Radius**2)
 
-# Plot final pressure and area fraction
-fig, ax1 = plt.subplots(figsize=(5.1, 3.))
-ax1.plot(ref_r/Radius, ref_pressure/pstar, "r--", linewidth=2, label="Hertzian")
-ax1.plot(r/Radius, p/pstar, "-", color="#1f77b4", linewidth=2, label="Greenwood-Tripp")
-ax1.set_xlabel(r"Normalized radial coordinate, $r/R$")
-ax1.set_ylabel(r"Normalized pressure, $p/\bar{p}$")
-ax1.grid(True, alpha=0.3)
+    # Final state plot
+    if ind_type == 'sphere':
+        idx = np.searchsorted(r, 3*a_computed)
+        plot_state(r[:idx], p[:idx], w0[:idx], w[:idx], Radius, sigma, pstar,
+                fr"Converged Solution, $d/\sigma={d/sigma:.2f}$",
+                f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf", set_limits=True)
+    else:
+        plot_state(r, p, w0, w, Radius, sigma, pstar,
+                fr"Converged Solution, $d/\sigma={d/sigma:.2f}$",
+                f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf", set_limits=True)
 
-if ind_type == 'sphere':
-    ax1.set_xlim(0, 3*a_computed/Radius)
-    ax1.set_ylim(0, np.max(ref_pressure)*1.1/pstar)
-else:
-    ax1.set_xlim(0, np.max(r/Radius))
-    ax1.set_ylim(0, np.max(p)*2./pstar)
+    # ==========================================================================
+    #       CONTACT AREA VISUALIZATION
+    # ==========================================================================
 
-ax2 = ax1.twinx()
-ax2.plot(r/Radius, area_fraction, "-", color="green", linewidth=2, label="Area fraction")
-ax2.set_ylabel("Area fraction", color='green')
-ax2.tick_params(axis='y', labelcolor='green')
-ax2.set_ylim(0, np.max(area_fraction)*1.1)
-
-lines1, labels1 = ax1.get_legend_handles_labels()
-lines2, labels2 = ax2.get_legend_handles_labels()
-ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
-
-plt.tight_layout()
-plt.savefig(f"Final_pressure_ind_type_{ind_type}_approach_{d/sigma:.2f}.pdf")
-plt.show()
-
-# Final state plot
-if ind_type == 'sphere':
-    idx = np.searchsorted(r, 3*a_computed)
-    plot_state(r[:idx], p[:idx], w0[:idx], w[:idx], Radius, sigma, pstar,
-               fr"Converged Solution, $d/\sigma={d/sigma:.2f}$",
-               f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf", set_limits=True)
-else:
-    plot_state(r, p, w0, w, Radius, sigma, pstar,
-               fr"Converged Solution, $d/\sigma={d/sigma:.2f}$",
-               f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf", set_limits=True)
-
-# =============================================================================
-#       CONTACT AREA VISUALIZATION
-# =============================================================================
-
-if ind_type == 'sphere':
-    print("\nGenerating contact area visualization...")
-    
-    dx = np.sqrt(1/eta)
-    extent = 2.0
-    x_coarse = np.arange(-extent*a_computed, extent*a_computed+dx, dx)
-    y_coarse = np.arange(-extent*a_computed, extent*a_computed+dx, dx)
-    Xc, Yc = np.meshgrid(x_coarse, y_coarse, indexing='ij')
-    Ac = np.zeros_like(Xc)
-    number_of_asperities = eta * dx**2
-    
-    print(f"Number of asperities per coarse cell: {number_of_asperities:.2f}")
-    
-    fig, ax = plt.subplots(figsize=(6, 6))
-    ax.set_xlabel(r"Normalized X coordinate, $x/a$")
-    ax.set_ylabel(r"Normalized Y coordinate, $y/a$")
-    
-    patches = []
-    for i in range(Xc.shape[0]):
-        for j in range(Xc.shape[1]):
-            polar_r = np.sqrt(Xc[i,j]**2 + Yc[i,j]**2)
-            area_frac = np.interp(polar_r, r, area_fraction, left=0.0, right=0.0)
-            contact_area_total = area_frac * dx**2
-            Ac[i,j] = contact_area_total
-            contact_area_per_asperity = contact_area_total / number_of_asperities if number_of_asperities > 0 else 0
-            
-            if contact_area_per_asperity > 0:
-                R = np.sqrt(contact_area_per_asperity / np.pi) / a_computed
-                patches.append(CirclePolygon((Xc[i, j]/a_computed, Yc[i, j]/a_computed),
-                                             radius=R, resolution=128, fc='grey', ec='none'))
-    
-    # Compute Holm's radius
-    print("Computing Holm's radius...")
-    holm_radius = compute_holm_radius(Xc, Yc, Ac)
-    
-    # Draw all circles efficiently
-    pc = PatchCollection(patches, match_original=True)
-    ax.add_collection(pc)
-    
-    # Legend handle
-    ax.scatter([], [], s=30, color='grey', label='Asperity contact')
-    
-    # Reference circles
-    ax.add_artist(plt.Circle((0, 0), 1.0, color='k', fill=False, linestyle='--',
-                             label='Hertzian contact radius, $a$', zorder=3))
-    ax.add_artist(plt.Circle((0, 0), holm_radius/a_computed, color='red', fill=False,
-                             linestyle='--', label="Holm's radius", zorder=3))
-    
-    ax.legend()
-    ax.set_aspect('equal')
-    plt.tight_layout()
-    plt.savefig(f"Contact_area_ind_type_{ind_type}_approach_{d/sigma:.2f}.pdf")
-    plt.show()
+    if ind_type == 'sphere':
+        print("\nGenerating contact area visualization...")
+        
+        dx = np.sqrt(1/eta)
+        extent = 2.0
+        x_coarse = np.arange(-extent*a_computed, extent*a_computed+dx, dx)
+        y_coarse = np.arange(-extent*a_computed, extent*a_computed+dx, dx)
+        Xc, Yc = np.meshgrid(x_coarse, y_coarse, indexing='ij')
+        Ac = np.zeros_like(Xc)
+        number_of_asperities = eta * dx**2
+        area_fraction = chi * F1_analytical(h, sigma)
+        
+        print(f"Number of asperities per coarse cell: {number_of_asperities:.2f}")
+        
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.set_xlim(-extent, extent)
+        ax.set_ylim(-extent, extent)
+        ax.set_xlabel(r"Normalized X coordinate, $x/a$")
+        ax.set_ylabel(r"Normalized Y coordinate, $y/a$")
+        
+        patches = []
+        for i in range(Xc.shape[0]):
+            for j in range(Xc.shape[1]):
+                polar_r = np.sqrt(Xc[i,j]**2 + Yc[i,j]**2)
+                area_frac = np.interp(polar_r, r, area_fraction, left=0.0, right=0.0)
+                contact_area_total = area_frac * dx**2
+                Ac[i,j] = contact_area_total
+                contact_area_per_asperity = contact_area_total / number_of_asperities if number_of_asperities > 0 else 0
+                
+                if contact_area_per_asperity > 0:
+                    R = np.sqrt(contact_area_per_asperity / np.pi) / a_computed
+                    patches.append(CirclePolygon((Xc[i, j]/a_computed, Yc[i, j]/a_computed),
+                                                radius=R, resolution=128, fc='grey', ec='none'))
+        
+        # Compute Holm's radius
+        print("Computing Holm's radius...")
+        holm_radius = compute_holm_radius(Xc, Yc, Ac)
+        
+        # Draw all circles efficiently
+        pc = PatchCollection(patches, match_original=True)
+        ax.add_collection(pc)
+        
+        # Legend handle
+        ax.scatter([], [], s=30, color='grey', label='Asperity contact')
+        
+        # Reference circles
+        ax.add_artist(plt.Circle((0, 0), 1.0, color='k', fill=False, linestyle='--',
+                                label='Hertzian contact radius, $a$', zorder=3))
+        ax.add_artist(plt.Circle((0, 0), holm_radius/a_computed, color='red', fill=False,
+                                linestyle='--', label="Holm's radius", zorder=3))
+        
+        ax.legend()
+        ax.set_aspect('equal')
+        plt.tight_layout()
+        plt.savefig(f"Contact_area_ind_type_{ind_type}_approach_{d/sigma:.2f}.pdf")
+        plt.show()
 
 print("\nSimulation complete!")
