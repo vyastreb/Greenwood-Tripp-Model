@@ -427,7 +427,10 @@ def plot_state(r, p, z, w, Radius, sigma, pstar, title="Current state", filename
 
     plt.tight_layout()
     if filename:
-        fig.savefig(filename, bbox_inches='tight', pad_inches=0)
+        if filename.endswith('.png') or filename.endswith('.jpg'):
+            fig.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=300)
+        else:
+            fig.savefig(filename, bbox_inches='tight', pad_inches=0)
     return fig
 
 
@@ -450,15 +453,19 @@ chi = np.pi * eta * beta
 # Indenter geometry
 ind_type = 'sphere'
 Radius = 0.01           # Indenter radius (m)
+pstar = Estar * np.sqrt(sigma / Radius) # Pressure normalization
 
 # Numerical parameters
 Penetration = np.array([0, -1 * sigma, -2 * sigma])          # Initial separation (m)
-# Penetration = np.array([-2 * sigma])          # Initial separation (m)
-pstar = Estar * np.sqrt(sigma / Radius)
+
+Penetration = np.linspace(2*sigma, -3*sigma, 5)  # Multiple approach steps
+
 Np = 20                 # Grid points
 kappa = 0.3              # Relaxation factor
 tolerance = 1e-3         # Convergence tolerance
 max_iter = 100
+
+PLOT_STATE = False      # Plot current state at each approach step
 
 # =============================================================================
 #       SETUP
@@ -481,6 +488,16 @@ w_old = np.zeros_like(r)
 
 # Precompute influence matrix
 M_influence = compute_influence_matrix(r, Estar, integration_limit)
+
+# Determine plot extent for contact area visualization
+plot_extent_norm = 0.1 # Default
+if ind_type == 'sphere':
+    # Estimate max contact radius based on max penetration
+    max_penetration = np.max(np.abs(Penetration))
+    max_a_est = np.sqrt(Radius * max_penetration) if max_penetration > 0 else 0.1 * Radius
+    # Add some margin (e.g. 2.5x max contact radius)
+    plot_extent_norm = 2.5 * max_a_est / Radius
+    print(f"Plot extent set to +/- {plot_extent_norm:.3f} R")
 
 # =============================================================================
 #       ITERATIVE SOLVER
@@ -539,15 +556,16 @@ for d in Penetration:
         ref_pressure = 0.5 * p0 / np.sqrt(1 - ref_r**2 / Radius**2)
 
     # Final state plot
-    if ind_type == 'sphere':
-        idx = np.searchsorted(r, 3*a_computed)
-        plot_state(r[:idx], p[:idx], w0[:idx], w[:idx], Radius, sigma, pstar,
-                fr"Converged Solution, $d/\sigma={d/sigma:.2f}$",
-                f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf", set_limits=True)
-    else:
-        plot_state(r, p, w0, w, Radius, sigma, pstar,
-                fr"Converged Solution, $d/\sigma={d/sigma:.2f}$",
-                f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf", set_limits=True)
+    if PLOT_STATE:
+        if ind_type == 'sphere':
+            idx = np.searchsorted(r, 3*a_computed)
+            plot_state(r[:idx], p[:idx], w0[:idx], w[:idx], Radius, sigma, pstar,
+                    fr"Converged Solution, $d/\sigma={d/sigma:.2f}$",
+                    f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf", set_limits=True)
+        else:
+            plot_state(r, p, w0, w, Radius, sigma, pstar,
+                    fr"Converged Solution, $d/\sigma={d/sigma:.2f}$",
+                    f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf", set_limits=True)
 
     # ==========================================================================
     #       CONTACT AREA VISUALIZATION
@@ -568,10 +586,11 @@ for d in Penetration:
         print(f"Number of asperities per coarse cell: {number_of_asperities:.2f}")
         
         fig, ax = plt.subplots(figsize=(6, 6))
-        ax.set_xlim(-extent, extent)
-        ax.set_ylim(-extent, extent)
-        ax.set_xlabel(r"Normalized X coordinate, $x/a$")
-        ax.set_ylabel(r"Normalized Y coordinate, $y/a$")
+        # Use fixed extent normalized by Radius to see evolution
+        ax.set_xlim(-plot_extent_norm, plot_extent_norm)
+        ax.set_ylim(-plot_extent_norm, plot_extent_norm)
+        ax.set_xlabel(r"Normalized X coordinate, $x/R$")
+        ax.set_ylabel(r"Normalized Y coordinate, $y/R$")
         
         patches = []
         for i in range(Xc.shape[0]):
@@ -583,9 +602,10 @@ for d in Penetration:
                 contact_area_per_asperity = contact_area_total / number_of_asperities if number_of_asperities > 0 else 0
                 
                 if contact_area_per_asperity > 0:
-                    R = np.sqrt(contact_area_per_asperity / np.pi) / a_computed
-                    patches.append(CirclePolygon((Xc[i, j]/a_computed, Yc[i, j]/a_computed),
-                                                radius=R, resolution=128, fc='grey', ec='none'))
+                    # Normalize radius and position by Radius (not a_computed)
+                    R_patch = np.sqrt(contact_area_per_asperity / np.pi) / Radius
+                    patches.append(CirclePolygon((Xc[i, j]/Radius, Yc[i, j]/Radius),
+                                                radius=R_patch, resolution=128, fc='grey', ec='none'))
         
         # Compute Holm's radius
         print("Computing Holm's radius...")
@@ -599,15 +619,15 @@ for d in Penetration:
         ax.scatter([], [], s=30, color='grey', label='Asperity contact')
         
         # Reference circles
-        ax.add_artist(plt.Circle((0, 0), 1.0, color='k', fill=False, linestyle='--',
+        ax.add_artist(plt.Circle((0, 0), a_computed/Radius, color='k', fill=False, linestyle='--',
                                 label='Hertzian contact radius, $a$', zorder=3))
-        ax.add_artist(plt.Circle((0, 0), holm_radius/a_computed, color='red', fill=False,
+        ax.add_artist(plt.Circle((0, 0), holm_radius/Radius, color='red', fill=False,
                                 linestyle='--', label="Holm's radius", zorder=3))
         
         ax.legend()
         ax.set_aspect('equal')
         plt.tight_layout()
-        plt.savefig(f"Contact_area_ind_type_{ind_type}_approach_{d/sigma:.2f}.pdf")
-        plt.show()
+        plt.savefig(f"Contact_area_ind_type_{ind_type}_approach_{d/sigma:.2f}.pdf") 
+        # plt.show()
 
 print("\nSimulation complete!")
