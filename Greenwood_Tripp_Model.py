@@ -92,21 +92,140 @@ def F1_analytical(h, sigma):
     return sigma / np.sqrt(2*np.pi) * np.exp(-h**2/(2*sigma**2)) - 0.5 * h * erfc(h/(np.sqrt(2)*sigma))
 
 
+@njit(fastmath=True)
+def ellipk_numba(m):
+    """
+    Complete elliptic integral of the first kind K(m)
+    Uses Arithmetic-Geometric Mean (AGM) method.
+    m is the parameter (k^2).
+    """
+    # Handle singularity and out of bounds
+    if m >= 1.0:
+        return 1e20 # Return very large number instead of inf to avoid NaNs in some cases
+    if m < 1e-15:
+        return np.pi / 2.0
+        
+    a = 1.0
+    b = np.sqrt(1.0 - m)
+    
+    # AGM Iteration
+    while np.abs(a - b) > 1e-13:
+        a_new = 0.5 * (a + b)
+        b = np.sqrt(a * b)
+        a = a_new
+        
+    return np.pi / (2.0 * a)
+
+
+@njit(fastmath=True)
+def influence_integrand_numba(x, r_target, r_source, r_prev, r_next):
+    """Integrand for influence matrix calculation"""
+    # Hat function value at x
+    phi = 0.0
+    if x <= r_source:
+        if r_source > r_prev:
+            phi = (x - r_prev) / (r_source - r_prev)
+    else:
+        if r_next > r_source:
+            phi = (r_next - x) / (r_next - r_source)
+            
+    if phi <= 0.0:
+        return 0.0
+        
+    # Kernel
+    # Match the regularization from the original code
+    eps = 1e-10 
+    denom = (r_target + x + eps)**2
+    m = 4 * x * r_target / denom
+        
+    K_val = ellipk_numba(m)
+    
+    return x / (x + r_target + eps) * phi * K_val
+
+
+@njit(fastmath=True)
+def adaptive_simpson(a, b, fa, fb, fm, eps, depth, max_depth, r_target, r_source, r_prev, r_next):
+    """Recursive adaptive Simpson's rule"""
+    c = 0.5 * (a + b)
+    h = b - a
+    d = 0.5 * (a + c)
+    e = 0.5 * (c + b)
+    
+    fd = influence_integrand_numba(d, r_target, r_source, r_prev, r_next)
+    fe = influence_integrand_numba(e, r_target, r_source, r_prev, r_next)
+    fc = fm
+    
+    S_left = (c - a) / 6.0 * (fa + 4.0 * fd + fc)
+    S_right = (b - c) / 6.0 * (fc + 4.0 * fe + fb)
+    S_whole = h / 6.0 * (fa + 4.0 * fc + fb)
+    
+    if depth >= max_depth:
+        return S_left + S_right
+        
+    if np.abs(S_left + S_right - S_whole) <= 15.0 * eps:
+        return S_left + S_right + (S_left + S_right - S_whole) / 15.0
+        
+    return adaptive_simpson(a, c, fa, fc, fd, eps/2.0, depth+1, max_depth, r_target, r_source, r_prev, r_next) + \
+           adaptive_simpson(c, b, fc, fb, fe, eps/2.0, depth+1, max_depth, r_target, r_source, r_prev, r_next)
+
+
+@njit(parallel=True)
+def compute_influence_matrix_numba(r, Estar):
+    """
+    Compute influence matrix using Numba with adaptive integration.
+    M[i, j] is the displacement at r[i] due to unit pressure at r[j].
+    """
+    n = len(r)
+    M = np.zeros((n, n))
+    coef = 4.0 / (np.pi * Estar)
+    
+    # Integration parameters
+    tol = 1e-6
+    max_depth = 15
+    
+    for i in prange(n):
+        r_i = r[i]
+        for j in range(n):
+            r_j = r[j]
+            
+            val = 0.0
+            
+            # Left leg of hat function: [r[j-1], r[j]]
+            if j > 0:
+                r_prev = r[j-1]
+                r_next = r[j+1] if j < n - 1 else r[j] + (r[j]-r[j-1])
+                
+                a, b = r_prev, r_j
+                
+                # Evaluate function at endpoints and midpoint
+                fa = influence_integrand_numba(a, r_i, r_j, r_prev, r_next)
+                fb = influence_integrand_numba(b, r_i, r_j, r_prev, r_next)
+                fm = influence_integrand_numba(0.5*(a+b), r_i, r_j, r_prev, r_next)
+                
+                val += adaptive_simpson(a, b, fa, fb, fm, tol, 0, max_depth, r_i, r_j, r_prev, r_next)
+            
+            # Right leg of hat function: [r[j], r[j+1]]
+            if j < n - 1:
+                r_prev = r[j-1] if j > 0 else r[j] - (r[j+1]-r[j])
+                r_next = r[j+1]
+                
+                a, b = r_j, r_next
+                
+                fa = influence_integrand_numba(a, r_i, r_j, r_prev, r_next)
+                fb = influence_integrand_numba(b, r_i, r_j, r_prev, r_next)
+                fm = influence_integrand_numba(0.5*(a+b), r_i, r_j, r_prev, r_next)
+                
+                val += adaptive_simpson(a, b, fa, fb, fm, tol, 0, max_depth, r_i, r_j, r_prev, r_next)
+            
+            M[i, j] = coef * val
+            
+    return M
+
+
 def compute_influence_matrix(r_grid, Estar, integration_limit):
     """Precompute influence matrix for displacement calculation"""
-    n = len(r_grid)
-    M = np.zeros((n, n))
-    print("Precomputing influence matrix...")
-    for i in range(n):
-        # Unit pressure at node i
-        p_vec = np.zeros(n)
-        p_vec[i] = 1.0
-        # Compute displacement
-        u_vec = get_displacement_from_p(p_vec, r_grid, Estar, integration_limit)
-        M[:, i] = u_vec
-        print(f"\rColumn {i+1}/{n}", end="", flush=True)
-    print("\nDone.")
-    return M
+    print("Precomputing influence matrix with Numba (Adaptive)...")
+    return compute_influence_matrix_numba(r_grid, Estar)
 
 
 def indenter_shape(r, indenter_type, params):
