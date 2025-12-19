@@ -60,7 +60,7 @@ $$
 \frac{\|u'_{k+1}-u_k\|_{\infty}}{\|u_k\|_{\infty}+\varepsilon_0} \le \kappa\epsilon,
 $$
 where $\varepsilon_0$ is a small parameter, set by default to $10^{-20}$, and used to avoid division by zero.
-The iterative algorithm converges in 17 iterations for the tolerance of $\epsilon=10^{-3}$.
+The iterative algorithm converges in 12 iterations for tolerance $\epsilon=10^{-3}$.
 The obtained pressure, contact area distribution, deformed configuration and the resulting surface displacement are shown in \Cref{fig:1} and compared with the reference Hertz solution for the same load.
 
 
@@ -89,7 +89,7 @@ Initial separation & $d$ & $-40$ & \si{\micro\meter} & $-2\sigma$ \\
 \hline
 \multicolumn{5}{l}{\textbf{Numerical Parameters}} \\
 Convergence tolerance & $\epsilon$ & $10^{-3}$ & (-) & \\
-Relaxation parameter & $\kappa$ & 0.2 & (-) & \\
+Relaxation parameter & $\kappa$ & 0.3 & (-) & \\
 \hline
 \end{tabular}
 \caption{Model parameters}

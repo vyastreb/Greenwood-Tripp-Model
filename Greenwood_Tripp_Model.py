@@ -278,8 +278,8 @@ Radius = 0.01           # Indenter radius (m)
 d = -2 * sigma          # Initial separation (m)
 pstar = Estar * np.sqrt(sigma / Radius)
 Np = 100                 # Grid points
-kappa = 0.2             # Relaxation factor
-tolerance = 1e-3        # Convergence tolerance
+kappa = 0.3              # Relaxation factor
+tolerance = 1e-3         # Convergence tolerance
 max_iter = 100
 
 # =============================================================================
