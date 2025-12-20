@@ -433,222 +433,235 @@ def plot_state(r, p, z, w, Radius, sigma, pstar, title="Current state", filename
             fig.savefig(filename, bbox_inches='tight', pad_inches=0)
     return fig
 
+def main():
+    # ==========================================================================
+    #         PARAMETERS
+    # ==========================================================================
 
-# =============================================================================
-#         PARAMETERS
-# =============================================================================
+    # Material properties
+    E = 2.1e11              # Young's modulus (Pa)
+    nu = 0.3                # Poisson's ratio
+    Estar = E / (2 * (1 - nu**2))
 
-# Material properties
-E = 2.1e11              # Young's modulus (Pa)
-nu = 0.3                # Poisson's ratio
-Estar = E / (2 * (1 - nu**2))
+    # Roughness parameters
+    sigma = 20e-6            # RMS roughness (m)
+    eta = 2e2 * 1e6         # Asperity density (1/m²)
+    beta = 0.3e-4           # Asperity tip radius (m)
+    mu = (4.0/3.0) * eta * Estar * np.sqrt(beta)
+    chi = np.pi * eta * beta
 
-# Roughness parameters
-sigma = 20e-6            # RMS roughness (m)
-eta = 2e2 * 1e6         # Asperity density (1/m²)
-beta = 0.3e-4           # Asperity tip radius (m)
-mu = (4.0/3.0) * eta * Estar * np.sqrt(beta)
-chi = np.pi * eta * beta
+    # Indenter geometry
+    ind_type = 'sphere'
+    Radius = 0.01           # Indenter radius (m)
+    pstar = Estar * np.sqrt(sigma / Radius) # Pressure normalization
 
-# Indenter geometry
-ind_type = 'sphere'
-Radius = 0.01           # Indenter radius (m)
-pstar = Estar * np.sqrt(sigma / Radius) # Pressure normalization
+    # Numerical parameters
+    ## Initial separation
+    Penetration = np.linspace(2*sigma, -3*sigma, 20)  # Multiple approach steps
+    # Penetration = np.array([0.*sigma])
 
-# Numerical parameters
-## Initial separation
-Penetration = np.linspace(2*sigma, -3*sigma, 5)  # Multiple approach steps
-# Penetration = np.array([0.*sigma])
+    Np = 20                 # Grid points
+    kappa = 0.3              # Relaxation factor
+    tolerance = 1e-3         # Convergence tolerance
+    max_iter = 100
 
-Np = 20                 # Grid points
-kappa = 0.3              # Relaxation factor
-tolerance = 1e-3         # Convergence tolerance
-max_iter = 100
+    PLOT_STATE = False      # Plot current state at each approach step
+    SAVE_STEPS = True       # Save npz data at each approach step
 
-PLOT_STATE = False      # Plot current state at each approach step
-SAVE_STEPS = True       # Save npz data at each approach step
-
-# =============================================================================
-#       SETUP
-# =============================================================================
-
-if ind_type == 'sphere':
-    params = [Radius]
-    integration_limit = 0.3 * Radius
-elif ind_type == 'flat':
-    fillet_radius = 0.05
-    params = [Radius, fillet_radius]
-    integration_limit = 2.0 * Radius
-elif ind_type == 'cone':
-    params = [np.pi/6]  # 30 degree half-angle
-    integration_limit = 0.1 * Radius
-
-r = np.linspace(0, integration_limit, Np)
-w = np.zeros_like(r)
-w_old = np.zeros_like(r)
-
-# Precompute influence matrix
-M_influence = compute_influence_matrix(r, Estar, integration_limit)
-
-# Determine plot extent for contact area visualization
-plot_extent_norm = 0.1 # Default
-if ind_type == 'sphere':
-    # Estimate max contact radius based on max penetration
-    max_penetration = np.max(np.abs(Penetration))
-    max_a_est = np.sqrt(Radius * max_penetration) if max_penetration > 0 else 0.1 * Radius
-    # Add some margin (e.g. 2.5x max contact radius)
-    plot_extent_norm = 2.5 * max_a_est / Radius
-    print(f"Plot extent set to +/- {plot_extent_norm:.3f} R")
-
-# =============================================================================
-#       ITERATIVE SOLVER
-# =============================================================================
-for d in Penetration:
-    print(f"\nStarting simulation for approach d = {d/sigma:.2f} * sigma")
-
-    # # Initial configuration
-    w0 = d + indenter_shape(r, ind_type, params)
-    
-    h = d + indenter_shape(r, ind_type, params) + w
-    p = mu * F32_numba(h, sigma)
-    w_old = w.copy()
-    eps_old = 1e10
-
-    print("\nStarting iterations...")
-    for it in range(max_iter):
-        w_new = M_influence @ p
-        w = kappa * w_new + (1 - kappa) * w_old
-        h += (w - w_old)
-        p = mu * F32_numba(h, sigma)
-        
-        eps = np.max(np.abs(w - w_old) / kappa) / (np.max(np.abs(w_old)) + 1e-20)
-        w_old = w.copy()
-        
-        if it > 2 and eps > eps_old * 1.01:
-            kappa = max(kappa * 0.5, 0.01)
-            print(f"\nReducing relaxation to {kappa:.3f}")
-        eps_old = eps
-        
-        print(f"\rIteration {it+1:03d}/{max_iter}, Error: {eps:.2e}", end='', flush=True)
-        
-        # Since we use relaxation, we check convergence based on the adjusted tolerance
-        if eps < kappa * tolerance:
-            print(f"\nConverged in {it+1} iterations (error: {eps:.2e})")
-            break
-    else:
-        print(f"\nWarning: Max iterations reached (error: {eps:.2e})")
-
-    # ========================================================================
-    #       RESULTS
-    # ========================================================================
-
-    force_computed = 2 * np.pi * integrate.simpson(p * r, x=r)
-    print(f"\nComputed force: {force_computed:.3f} N")
+    # ==========================================================================
+    #       SETUP
+    # ==========================================================================
 
     if ind_type == 'sphere':
-        a_computed = ((3 * force_computed * Radius) / (4 * Estar))**(1/3)
-        p0 = (3 * force_computed) / (2 * np.pi * a_computed**2)
-        ref_r = np.linspace(0, a_computed, 100)
-        ref_pressure = p0 * np.sqrt(1 - (ref_r / a_computed)**2)
-        print(f"Roughness parameter sigma*R/a^2: {sigma*Radius/a_computed**2:.3f}")
+        params = [Radius]
+        integration_limit = 0.3 * Radius
     elif ind_type == 'flat':
-        p0 = force_computed / (np.pi * Radius**2)
-        ref_r = np.linspace(0, Radius*(1-1e-4), 100)
-        ref_pressure = 0.5 * p0 / np.sqrt(1 - ref_r**2 / Radius**2)
+        fillet_radius = 0.05
+        params = [Radius, fillet_radius]
+        integration_limit = 2.0 * Radius
+    elif ind_type == 'cone':
+        params = [np.pi/6]  # 30 degree half-angle
+        integration_limit = 0.1 * Radius
 
-    # Final state plot
-    if PLOT_STATE:
-        if ind_type == 'sphere':
-            idx = np.searchsorted(r, 3*a_computed)
-            plot_state(r[:idx], p[:idx], w0[:idx], w[:idx], Radius, sigma, pstar,
-                    fr"Converged Solution, $d/\sigma={d/sigma:.2f}$",
-                    f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf", set_limits=True)
-        else:
-            plot_state(r, p, w0, w, Radius, sigma, pstar,
-                    fr"Converged Solution, $d/\sigma={d/sigma:.2f}$",
-                    f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf", set_limits=True)
+    r = np.linspace(0, integration_limit, Np)
+    w = np.zeros_like(r)
+    w_old = np.zeros_like(r)
 
-    # ==========================================================================
-    #       CONTACT AREA VISUALIZATION
-    # ==========================================================================
+    # Precompute influence matrix
+    M_influence = compute_influence_matrix(r, Estar, integration_limit)
 
+    # Determine plot extent for contact area visualization
+    plot_extent_norm = 0.1 # Default
     if ind_type == 'sphere':
-        print("\nGenerating contact area visualization...")
+        # Estimate max contact radius based on max penetration
+        max_penetration = np.max(np.abs(Penetration))
+        max_a_est = np.sqrt(Radius * max_penetration) if max_penetration > 0 else 0.1 * Radius
+        # Add some margin (e.g. 2.5x max contact radius)
+        plot_extent_norm = 2.5 * max_a_est / Radius
+        print(f"Plot extent set to +/- {plot_extent_norm:.3f} R")
+
+    # Storage for results
+    results_history = {
+        'd': [], 'force': [], 'a_computed': [], 'holm_radius': [],
+        'p': [], 'w': [], 'h': []
+    }
+
+    # ==========================================================================
+    #       ITERATIVE SOLVER
+    # ==========================================================================
+    for d in Penetration:
+        print(f"\nStarting simulation for approach d = {d/sigma:.2f} * sigma")
+
+        # # Initial configuration
+        w0 = d + indenter_shape(r, ind_type, params)
         
-        dx = np.sqrt(1/eta)
-        extent = 3.0
-        x_coarse = np.arange(-extent*a_computed, extent*a_computed+dx, dx)
-        y_coarse = np.arange(-extent*a_computed, extent*a_computed+dx, dx)
-        Xc, Yc = np.meshgrid(x_coarse, y_coarse, indexing='ij')
-        Ac = np.zeros_like(Xc)
-        number_of_asperities = eta * dx**2
-        area_fraction = chi * F1_analytical(h, sigma)
-        
-        print(f"Number of asperities per coarse cell: {number_of_asperities:.2f}")
-        
-        fig, ax = plt.subplots(figsize=(6, 6))
-        # Use fixed extent normalized by Radius to see evolution
-        plot_extent_norm = 0.2
-        ax.set_xlim(-plot_extent_norm, plot_extent_norm)
-        ax.set_ylim(-plot_extent_norm, plot_extent_norm)
-        ax.set_xlabel(r"Normalized X coordinate, $x/R$")
-        ax.set_ylabel(r"Normalized Y coordinate, $y/R$")
-        
-        patches = []
-        for i in range(Xc.shape[0]):
-            for j in range(Xc.shape[1]):
-                polar_r = np.sqrt(Xc[i,j]**2 + Yc[i,j]**2)
-                area_frac = np.interp(polar_r, r, area_fraction, left=0.0, right=0.0)
-                contact_area_total = area_frac * dx**2
-                Ac[i,j] = contact_area_total
-                contact_area_per_asperity = contact_area_total / number_of_asperities if number_of_asperities > 0 else 0
-                
-                if contact_area_per_asperity > 0:
-                    # Normalize radius and position by Radius (not a_computed)
-                    R_patch = np.sqrt(contact_area_per_asperity / np.pi) / Radius
-                    patches.append(CirclePolygon((Xc[i, j]/Radius, Yc[i, j]/Radius),
-                                                radius=R_patch, resolution=128, fc='grey', ec='none'))
-        
-        # Compute Holm's radius
-        print("Computing Holm's radius...")
-        holm_radius = compute_holm_radius(Xc, Yc, Ac)
-        
-        # Draw all circles efficiently
-        pc = PatchCollection(patches, match_original=True)
-        ax.add_collection(pc)
-        
-        # Legend handle
-        ax.scatter([], [], s=30, color='grey', label='Asperity contact')
-        
-        # Reference circles
-        ax.add_artist(plt.Circle((0, 0), a_computed/Radius, color='k', fill=False, linestyle='--',
-                                label='Hertzian contact radius, $a$', zorder=3))
-        ax.add_artist(plt.Circle((0, 0), holm_radius/Radius, color='red', fill=False,
-                                linestyle='--', label="Greenwood-Holm radius", zorder=3))
-        
-        ax.legend()
-        ax.set_aspect('equal')
-        plt.tight_layout()
-        plt.savefig(f"Contact_area_ind_type_{ind_type}_approach_{d/sigma:.2f}.pdf") 
-        # plt.show()
+        h = d + indenter_shape(r, ind_type, params) + w
+        p = mu * F32_numba(h, sigma)
+        w_old = w.copy()
+        eps_old = 1e10
+
+        print("\nStarting iterations...")
+        for it in range(max_iter):
+            w_new = M_influence @ p
+            w = kappa * w_new + (1 - kappa) * w_old
+            h += (w - w_old)
+            p = mu * F32_numba(h, sigma)
+            
+            eps = np.max(np.abs(w - w_old) / kappa) / (np.max(np.abs(w_old)) + 1e-20)
+            w_old = w.copy()
+            
+            if it > 2 and eps > eps_old * 1.01:
+                kappa = max(kappa * 0.5, 0.01)
+                print(f"\nReducing relaxation to {kappa:.3f}")
+            eps_old = eps
+            
+            print(f"\rIteration {it+1:03d}/{max_iter}, Error: {eps:.2e}", end='', flush=True)
+            
+            # Since we use relaxation, we check convergence based on the adjusted tolerance
+            if eps < kappa * tolerance:
+                print(f"\nConverged in {it+1} iterations (error: {eps:.2e})")
+                break
+        else:
+            print(f"\nWarning: Max iterations reached (error: {eps:.2e})")
+
+        # =====================================================================
+        #       RESULTS
+        # =====================================================================
+
+        force_computed = 2 * np.pi * integrate.simpson(p * r, x=r)
+        print(f"\nComputed force: {force_computed:.3f} N")
+
+        if ind_type == 'sphere':
+            a_computed = ((3 * force_computed * Radius) / (4 * Estar))**(1/3)
+            p0 = (3 * force_computed) / (2 * np.pi * a_computed**2)
+            ref_r = np.linspace(0, a_computed, 100)
+            ref_pressure = p0 * np.sqrt(1 - (ref_r / a_computed)**2)
+            print(f"Roughness parameter sigma*R/a^2: {sigma*Radius/a_computed**2:.3f}")
+        elif ind_type == 'flat':
+            p0 = force_computed / (np.pi * Radius**2)
+            ref_r = np.linspace(0, Radius*(1-1e-4), 100)
+            ref_pressure = 0.5 * p0 / np.sqrt(1 - ref_r**2 / Radius**2)
+
+        # Final state plot
+        if PLOT_STATE:
+            if ind_type == 'sphere':
+                idx = np.searchsorted(r, 3*a_computed)
+                plot_state(r[:idx], p[:idx], w0[:idx], w[:idx], Radius, sigma, pstar,
+                        fr"Converged Solution, $d/\sigma={d/sigma:.2f}$",
+                        f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf", set_limits=True)
+            else:
+                plot_state(r, p, w0, w, Radius, sigma, pstar,
+                        fr"Converged Solution, $d/\sigma={d/sigma:.2f}$",
+                        f"Current_state_ind_type_{ind_type}_approach_{d/sigma:.2f}_iter.pdf", set_limits=True)
+
+        # ======================================================================
+        #       CONTACT AREA VISUALIZATION
+        # ======================================================================
+
+        if ind_type == 'sphere':
+            print("\nGenerating contact area visualization...")
+            
+            dx = np.sqrt(1/eta)
+            extent = 3.0
+            x_coarse = np.arange(-extent*a_computed, extent*a_computed+dx, dx)
+            y_coarse = np.arange(-extent*a_computed, extent*a_computed+dx, dx)
+            Xc, Yc = np.meshgrid(x_coarse, y_coarse, indexing='ij')
+            Ac = np.zeros_like(Xc)
+            number_of_asperities = eta * dx**2
+            area_fraction = chi * F1_analytical(h, sigma)
+            
+            print(f"Number of asperities per coarse cell: {number_of_asperities:.2f}")
+            
+            fig, ax = plt.subplots(figsize=(6, 6))
+            # Use fixed extent normalized by Radius to see evolution
+            plot_extent_norm = 0.2
+            ax.set_xlim(-plot_extent_norm, plot_extent_norm)
+            ax.set_ylim(-plot_extent_norm, plot_extent_norm)
+            ax.set_xlabel(r"Normalized X coordinate, $x/R$")
+            ax.set_ylabel(r"Normalized Y coordinate, $y/R$")
+            
+            patches = []
+            for i in range(Xc.shape[0]):
+                for j in range(Xc.shape[1]):
+                    polar_r = np.sqrt(Xc[i,j]**2 + Yc[i,j]**2)
+                    area_frac = np.interp(polar_r, r, area_fraction, left=0.0, right=0.0)
+                    contact_area_total = area_frac * dx**2
+                    Ac[i,j] = contact_area_total
+                    contact_area_per_asperity = contact_area_total / number_of_asperities if number_of_asperities > 0 else 0
+                    
+                    if contact_area_per_asperity > 0:
+                        # Normalize radius and position by Radius (not a_computed)
+                        R_patch = np.sqrt(contact_area_per_asperity / np.pi) / Radius
+                        patches.append(CirclePolygon((Xc[i, j]/Radius, Yc[i, j]/Radius),
+                                                    radius=R_patch, resolution=128, fc='grey', ec='none'))
+            
+            # Compute Holm's radius
+            print("Computing Holm's radius...")
+            holm_radius = compute_holm_radius(Xc, Yc, Ac)
+            
+            # Draw all circles efficiently
+            pc = PatchCollection(patches, match_original=True)
+            ax.add_collection(pc)
+            
+            # Legend handle
+            ax.scatter([], [], s=30, color='grey', label='Asperity contact')
+            
+            # Reference circles
+            ax.add_artist(plt.Circle((0, 0), a_computed/Radius, color='k', fill=False, linestyle='--',
+                                    label='Hertzian contact radius, $a$', zorder=3))
+            ax.add_artist(plt.Circle((0, 0), holm_radius/Radius, color='red', fill=False,
+                                    linestyle='--', label="Greenwood-Holm radius", zorder=3))
+            
+            ax.legend()
+            ax.set_aspect('equal')
+            plt.tight_layout()
+            plt.savefig(f"Contact_area_ind_type_{ind_type}_approach_{d/sigma:.2f}.pdf") 
+            # plt.show()
+
+        if SAVE_STEPS:
+            results_history['d'].append(d)
+            results_history['force'].append(force_computed)
+            results_history['p'].append(p.copy())
+            results_history['w'].append(w.copy())
+            results_history['h'].append(h.copy())
+            if 'a_computed' in locals(): results_history['a_computed'].append(a_computed)
+            if 'holm_radius' in locals(): results_history['holm_radius'].append(holm_radius)
 
     if SAVE_STEPS:
-        filename_npz = f"Results_ind_type_{ind_type}_approach_{d/sigma:.2f}.npz"
-        print(f"Saving results to {filename_npz}")
+        filename_npz = f"Results_ind_type_{ind_type}_full_history.npz"
+        print(f"\nSaving all results to {filename_npz}")
         
-        data_to_save = {
-            'r': r, 'p': p, 'w': w, 'h': h,
-            'd': d, 'Radius': Radius,
-            'E': E, 'nu': nu, 'Estar': Estar,
-            'sigma': sigma, 'eta': eta, 'beta': beta, 'mu': mu, 'chi': chi,
-            'force': force_computed
-        }
+        # Filter out empty lists
+        data_to_save = {k: np.array(v) for k, v in results_history.items() if len(v) > 0}
         
-        if 'holm_radius' in locals():
-            data_to_save['holm_radius'] = holm_radius
-        if 'a_computed' in locals():
-            data_to_save['a_computed'] = a_computed
-            
-        np.savez(filename_npz, **data_to_save)
+        np.savez(filename_npz,
+            r=r,
+            Radius=Radius, E=E, nu=nu, Estar=Estar,
+            sigma=sigma, eta=eta, beta=beta, mu=mu, chi=chi,
+            **data_to_save
+        )
 
-print("\nSimulation complete!")
+    print("\nSimulation complete!")
+
+if __name__ == "__main__":
+    main()
