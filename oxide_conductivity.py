@@ -1,13 +1,8 @@
 import rfgen as rf
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.special import erfcinv
 from Greenwood_Tripp_Model import compute_holm_radius, F1_analytical
-
-# LaTeX-style plots
-plt.rc('text', usetex=True)
-plt.rc('font', family='serif')
-plt.rcParams.update({'font.size': 8})
+import os
 
 # Load results from Greenwood-Tripp model
 try:
@@ -52,32 +47,57 @@ x_lim = size / 2.
 x_coarse = np.arange(-x_lim, x_lim+dx, dx)
 y_coarse = np.arange(-x_lim, x_lim+dx, dx)
 Xc, Yc = np.meshgrid(x_coarse, y_coarse, indexing='ij')
-Ac = np.zeros_like(Xc)
-Ac_oxidized = np.zeros_like(Xc)
+
+# Pre-calculate Ac for all steps to avoid recomputing in inner loops
+print("Pre-calculating contact areas...")
+Ac_stack = np.zeros((H.shape[0], Xc.shape[0], Xc.shape[1]))
+Resistance_self = np.zeros_like(D)
+Resistance_inter = np.zeros_like(D)
+
+for k in range(H.shape[0]):        
+    area_fraction = np.pi * beta * eta * F1_analytical(H[k], sigma)
+    sum_radii = 0.0
+    for i in range(Xc.shape[0]):
+        for j in range(Xc.shape[1]):
+            polar_r = np.sqrt(Xc[i,j]**2 + Yc[i,j]**2)
+            area_frac = np.interp(polar_r, r, area_fraction, left=0.0, right=0.0)
+            contact_area_total = area_frac * dx**2
+            Ac_stack[k, i, j] = contact_area_total
+            if contact_area_total > 0:
+                sum_radii += np.sqrt(contact_area_total/np.pi)
+    
+    R_spots = 1.0 / (2.0 * sum_radii) if sum_radii > 0 else np.inf
+    R_Holm = 1.0 / (2.0 * Holm_radius[k]) if Holm_radius[k] > 0 else np.inf
+    
+    Resistance_self[k] = R_spots
+    Resistance_inter[k] = R_Holm
 
 # Oxide correlation length
 L_all = np.array([5,10,20]) / eta**0.5
 Hurst = 0.5
 
 # Oxide fraction
-# fract = 0.5
 Fract = [0.3, 0.5, 0.7]
-
-# Prefix for output
-prefix = "Test_"
 
 # Resistivity
 resistivity = 2.7e-8  # Ohm meter (Al)
 
 N = 1024
-Nsurfaces = 10
+Nsurfaces = 100
 
-Oxidized_Resistance_all = np.zeros((len(Fract), H.shape[0], Nsurfaces))
+# Indices for resampling
+scale_x = N / Xc.shape[0]
+scale_y = N / Xc.shape[1]
+idx_i = (np.arange(Xc.shape[0]) * scale_x).astype(int)
+idx_j = (np.arange(Xc.shape[1]) * scale_y).astype(int)
+II, JJ = np.meshgrid(idx_i, idx_j, indexing='ij')
 
-for L in L_all:
+for L_idx, L in enumerate(L_all):
     kl = size / (2*L) 
     ks = 3 * kl
-    for fract in Fract:
+    for fract_idx, fract in enumerate(Fract):
+        print(f"Simulating L={L:.2e}, fract={fract}")
+        
         # Generate rough surface
         Oxide_maps = np.zeros((Nsurfaces, N, N), dtype=bool)
         for j in range(Nsurfaces):
@@ -100,51 +120,10 @@ for L in L_all:
 
             Oxide_maps[j] = oxide
 
-        ######################################
-        #  LOOP OVER APPROACHES
-        #####################################
-        Resistance_self = np.zeros_like(D)
-        Resistance_inter = np.zeros_like(D)
-
         Oxidized_Resistance = np.zeros((H.shape[0], Nsurfaces))
-        for k in range(H.shape[0]):        
-            area_fraction = np.pi * beta * eta * F1_analytical(H[k], sigma)
-            sum_radii = 0.0
-            for i in range(Xc.shape[0]):
-                for j in range(Xc.shape[1]):
-                    polar_r = np.sqrt(Xc[i,j]**2 + Yc[i,j]**2)
-                    area_frac = np.interp(polar_r, r, area_fraction, left=0.0, right=0.0)
-                    contact_area_total = area_frac * dx**2
-                    Ac[i,j] = contact_area_total
-                    if contact_area_total > 0:
-                        sum_radii += np.sqrt(contact_area_total/np.pi)
-            
-            # Resistance calculation (assuming conductivity = 1 for now, user can adjust)
-            # R_total = R_Holm + R_spots
-            # R_spots = resistivity / (2 * sum(a_i))
-            # R_Holm = resistivity / (2 * alpha)
-            
-            R_spots = 1.0 / (2.0 * sum_radii) if sum_radii > 0 else np.inf
-            R_Holm = 1.0 / (2.0 * Holm_radius[k]) if Holm_radius[k] > 0 else np.inf
-            
-            Resistance_self[k] = R_spots
-            Resistance_inter[k] = R_Holm
-
-        # Check with surface roughness
-            # Vectorized oxide mapping
-            # Resample oxide maps to match Xc shape
-            # We can use simple block averaging or nearest neighbor if the grid aligns
-            # Here we use nearest neighbor as in the original loop: int(i*N/Xc.shape[0])
-            
-            scale_x = N / Xc.shape[0]
-            scale_y = N / Xc.shape[1]
-            
-            # Create indices for resampling
-            idx_i = (np.arange(Xc.shape[0]) * scale_x).astype(int)
-            idx_j = (np.arange(Xc.shape[1]) * scale_y).astype(int)
-            
-            # Use meshgrid to get 2D indices
-            II, JJ = np.meshgrid(idx_i, idx_j, indexing='ij')
+        
+        for k in range(H.shape[0]):
+            Ac = Ac_stack[k]
             
             for j in range(Nsurfaces):
                 oxide = Oxide_maps[j]
@@ -156,7 +135,6 @@ for L in L_all:
                 Ac_oxidized = Ac * (1 - oxide_resampled)
                 
                 # Vectorized sum of radii
-                # Avoid sqrt of negative numbers (though Ac_oxidized should be >= 0)
                 valid_mask = Ac_oxidized > 0
                 sum_radii_oxide = np.sum(np.sqrt(Ac_oxidized[valid_mask] / np.pi))
 
@@ -166,59 +144,22 @@ for L in L_all:
 
                 Oxidized_Resistance[k,j] = R_spots_oxide + R_Holm_oxide
 
-
-
-        fig,ax = plt.subplots(1,1, figsize=(3.,3))
-        plt.xscale("log")
-        plt.yscale("log")
-        plt.xlim(np.min(Force),np.max(Force))
-
-        for j in range(Nsurfaces):
-            plt.plot(Force, resistivity * Oxidized_Resistance[:,j], "-", color="gray",alpha=0.1, linewidth=0.5)
-
-        rms = np.std(resistivity * Oxidized_Resistance, axis=1)
-        mean = np.mean(resistivity * Oxidized_Resistance, axis=1)
-        plt.grid()
-        plt.fill_between(Force, mean - rms, mean + rms, color='r', alpha=0.5)
-        plt.plot(Force, mean, "s-", color="yellowgreen", markersize=5, label=f"Mean oxidized, $\\xi={fract}$, $l_{{\\mathcal{{O}}}}\\sqrt{{\\eta}}={L*np.sqrt(eta):.1f}$")
-
-        plt.plot(Force, resistivity * (Resistance_self + Resistance_inter), "o-", color="turquoise", label="No oxide")
-
-        # for fraction 0.7
-        exponent = -0.33
-        plt.plot(Force, Force**(exponent) * 0.47e-3, "--", color="k", label=rf"$R \propto F^{{{exponent}}}$")
-
-        # for fraction 0.5
-        # plt.plot(Force, Force**(-0.3) * 0.3e-3, "--", color="k", label=r"$R \propto F^{-0.3}$")
-
-        # for fraction 0.2
-        # plt.plot(Force, Force**(-0.25) * 0.165e-3, "--", color="k", label=r"$R \propto F^{-0.25}$")
-
-        plt.plot(Force, Force**(-0.23) * 1.33e-4, "-.", color="k", label=r"$R \propto F^{-0.23}$")
-
-
-        plt.xlabel("Force (N)")
-        plt.ylabel("Resistance (Ohm)")
-        plt.legend()
-        fig.savefig(f"{prefix}Oxide_Conductivity_vs_Force_oxide_fraction_{fract}_correlation_{L*np.sqrt(eta)}.pdf", bbox_inches='tight', pad_inches=0, dpi=300)
-        plt.show()
-
-##
-
-Rstar = Radius
-s = 3*sigma
-F_norm = 2*Force / (Estar * np.sqrt(Rstar * s**3))
-K_norm = 2 / ((Resistance_self + Resistance_inter) * np.sqrt(Rstar * s))
-
-fig,ax = plt.subplots(1,1, figsize=(3.,3))
-plt.plot(F_norm, K_norm, "o-", color="turquoise", label="No oxide")
-for j in range(Nsurfaces):
-    K_oxide = 2 / (Oxidized_Resistance[:,j] * np.sqrt(Rstar * s))
-    plt.plot(F_norm, K_oxide, "-", color="gray", alpha=0.1, linewidth=0.5)
-rms = np.std(2 / (Oxidized_Resistance * np.sqrt(Rstar * s)), axis=1)
-mean = np.mean(2 / (Oxidized_Resistance * np.sqrt(Rstar * s)), axis=1)
-plt.fill_between(F_norm, mean - rms, mean + rms, color='r', alpha=0.5)
-plt.plot(F_norm, mean, "s-", color="yellowgreen", markersize=5, label=f"Mean oxidized, $\\xi={fract}$, $l_{{\\mathcal{{O}}}}\\sqrt{{\\eta}}={L*np.sqrt(eta):.1f}$")
-plt.xlabel(r"Normalized Force, $F'$")
-plt.ylabel(r"Normalized Conductance, $\\kappa'$")
-plt.show()
+        # Save results
+        filename = f"Oxide_Results_L_{L_idx}_fract_{fract_idx}.npz"
+        np.savez(filename, 
+                 Oxidized_Resistance=Oxidized_Resistance,
+                 Resistance_self=Resistance_self,
+                 Resistance_inter=Resistance_inter,
+                 Force=Force,
+                 L=L,
+                 fract=fract,
+                 eta=eta,
+                 beta=beta,
+                 Radius=Radius,
+                 sigma=sigma,
+                 Estar=Estar,
+                 resistivity=resistivity,
+                 L_idx=L_idx,
+                 fract_idx=fract_idx
+                 )
+        print(f"Saved {filename}")
