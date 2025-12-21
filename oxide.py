@@ -55,7 +55,7 @@ for i,(l,fract) in enumerate(zip(L, fract)):
     print("Error = np.sum(oxide)/oxide.size - fract =", abs(np.sum(oxide)/oxide.size - fract))
     ax[1,i].imshow(oxide, cmap='gray_r', extent=[-size/2./Radius, size/2./Radius, -size/2./Radius, size/2./Radius], interpolation = "none")
     ax[0,i].set_title(f"$l_{{\\mathcal{{O}}}}\sqrt{{\\eta}} = {l*np.sqrt(eta):.1f}$, $\\frac{{R}}{{l_{{\\mathcal{{O}}}}}} = {Radius/l:.1f}$")
-    ax[1,i].set_title(f"$f_{{\\mathcal{{O}}}} = {fract:.2f}$")
+    ax[1,i].set_title(f"$\\xi = {fract:.2f}$")
     
     # Only set labels for the appropriate axes
     if i == 0:
